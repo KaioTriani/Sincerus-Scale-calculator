@@ -4,9 +4,14 @@ const scenarios = [
   { key: 'optimistic', name: 'Otimista', costConversation: 4.12, closeRate: 0.0578 }
 ];
 
+const WHATSAPP_PHONE = '5583999054165';
+
 const investmentInput = document.getElementById('investment');
 const investmentRange = document.getElementById('investmentRange');
 const marginInput = document.getElementById('margin');
+const clientNameInput = document.getElementById('clientName');
+const storeNameInput = document.getElementById('storeName');
+const clientPanel = document.getElementById('dados-cliente');
 const scenarioGrid = document.getElementById('scenarioGrid');
 const baseNote = document.getElementById('baseNote');
 const profitHint = document.getElementById('profitHint');
@@ -21,6 +26,8 @@ const cashbackResult = document.getElementById('cashbackResult');
 const brl = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
 const oneDecimal = new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 const twoDecimals = new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+let currentCashback = null;
 
 function clampInvestment(value) {
   const n = Number(value) || 1500;
@@ -50,6 +57,65 @@ function scenarioMarkup(s, values) {
     </article>`;
 }
 
+function getProjection() {
+  const investment = clampInvestment(investmentInput.value);
+  const results = scenarios.map(s => ({ s, values: calculateScenario(investment, s) }));
+  const base = results.find(x => x.s.key === 'base').values;
+  const margin = Number(marginInput.value);
+  const hasMargin = Number.isFinite(margin) && margin > 0;
+  const grossProfit = hasMargin ? base.sales * margin : null;
+  const netProfit = hasMargin ? grossProfit - investment : null;
+  const roas = hasMargin ? grossProfit / investment : null;
+
+  return { investment, results, base, margin, hasMargin, grossProfit, netProfit, roas };
+}
+
+function buildWhatsAppMessage(projection) {
+  const clientName = clientNameInput.value.trim();
+  const storeName = storeNameInput.value.trim();
+
+  const lines = [
+    'Olá, equipe Sincerus! 👋',
+    '',
+    `Meu nome é ${clientName} e falo pela loja ${storeName}.`,
+    'Fiz uma projeção no Sincerus Scale e gostaria de conversar sobre esses números:',
+    '',
+    `• Investimento mensal em mídia: ${brl.format(projection.investment)}`,
+    `• Cenário base: ${oneDecimal.format(projection.base.sales)} vendas estimadas`,
+    `• Conversas estimadas: ${Math.round(projection.base.conversations)} por mês`,
+    `• Conversas por dia: ${oneDecimal.format(projection.base.conversationsPerDay)}`,
+    `• CAC em mídia: ${brl.format(projection.base.cac)}`
+  ];
+
+  if (projection.hasMargin) {
+    lines.push(
+      `• Margem por aparelho informada: ${brl.format(projection.margin)}`,
+      `• Lucro bruto estimado: ${brl.format(projection.grossProfit)}`,
+      `• Lucro líquido estimado: ${brl.format(projection.netProfit)}`,
+      `• ROAS estimado: ${twoDecimals.format(projection.roas)}x`
+    );
+  } else {
+    lines.push('• Margem por aparelho: não informada');
+  }
+
+  if (currentCashback) {
+    lines.push(`• Cashback sorteado: ${brl.format(currentCashback)}`);
+  }
+
+  lines.push('', 'Quero entender os próximos passos para aplicar isso na minha loja.');
+
+  return lines.join('\n');
+}
+
+function updateWhatsAppLinks(projection) {
+  const message = buildWhatsAppMessage(projection);
+  const url = `https://api.whatsapp.com/send/?phone=${WHATSAPP_PHONE}&text=${encodeURIComponent(message)}&type=phone_number&app_absent=0`;
+
+  document.querySelectorAll('[data-whatsapp]').forEach(link => {
+    link.href = url;
+  });
+}
+
 function updateQuickButtons(investment) {
   document.querySelectorAll('.quick-values button').forEach(btn => {
     btn.classList.toggle('active', Number(btn.dataset.value) === investment);
@@ -57,22 +123,18 @@ function updateQuickButtons(investment) {
 }
 
 function render() {
-  const investment = clampInvestment(investmentInput.value);
+  const projection = getProjection();
+  const { investment, results, base, hasMargin, grossProfit, netProfit, roas } = projection;
+
   investmentInput.value = investment;
   investmentRange.value = investment;
   updateQuickButtons(investment);
 
-  const results = scenarios.map(s => ({ s, values: calculateScenario(investment, s) }));
-  scenarioGrid.innerHTML = results.map(({s, values}) => scenarioMarkup(s, values)).join('');
+  scenarioGrid.innerHTML = results.map(({ s, values }) => scenarioMarkup(s, values)).join('');
 
-  const base = results.find(x => x.s.key === 'base').values;
   baseNote.innerHTML = `No cenário base, prepare sua equipe para <strong>${oneDecimal.format(base.conversationsPerDay)} conversas por dia.</strong> <span>30 dias / mês</span>`;
 
-  const margin = Number(marginInput.value);
-  if (Number.isFinite(margin) && margin > 0) {
-    const grossProfit = base.sales * margin;
-    const netProfit = grossProfit - investment;
-    const roas = grossProfit / investment;
+  if (hasMargin) {
     grossProfitEl.textContent = brl.format(grossProfit);
     netProfitEl.textContent = brl.format(netProfit);
     roasEl.textContent = `${twoDecimals.format(roas)}x`;
@@ -82,6 +144,19 @@ function render() {
     profitSection.classList.add('hidden');
     profitHint.classList.remove('hidden');
   }
+
+  updateWhatsAppLinks(projection);
+}
+
+function ensureClientIdentification(event) {
+  const missing = !clientNameInput.value.trim() ? clientNameInput : !storeNameInput.value.trim() ? storeNameInput : null;
+
+  if (!missing) return;
+
+  event.preventDefault();
+  clientPanel.classList.add('needs-data');
+  clientPanel.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  setTimeout(() => missing.focus(), 450);
 }
 
 investmentInput.addEventListener('input', () => {
@@ -89,11 +164,20 @@ investmentInput.addEventListener('input', () => {
   render();
 });
 investmentInput.addEventListener('blur', render);
+
 investmentRange.addEventListener('input', () => {
   investmentInput.value = investmentRange.value;
   render();
 });
+
 marginInput.addEventListener('input', render);
+
+[clientNameInput, storeNameInput].forEach(input => {
+  input.addEventListener('input', () => {
+    clientPanel.classList.remove('needs-data');
+    updateWhatsAppLinks(getProjection());
+  });
+});
 
 document.querySelectorAll('.quick-values button').forEach(btn => {
   btn.addEventListener('click', () => {
@@ -103,21 +187,35 @@ document.querySelectorAll('.quick-values button').forEach(btn => {
 });
 
 document.getElementById('customizeBtn').addEventListener('click', () => {
-  marginInput.focus();
-  marginInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  const target = !clientNameInput.value.trim()
+    ? clientNameInput
+    : !storeNameInput.value.trim()
+      ? storeNameInput
+      : marginInput;
+
+  target.focus();
+  target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+});
+
+document.querySelectorAll('[data-whatsapp]').forEach(link => {
+  link.addEventListener('click', ensureClientIdentification);
 });
 
 let currentRotation = 0;
 spinBtn.addEventListener('click', () => {
   spinBtn.disabled = true;
   cashbackResult.textContent = '';
+
   const possible = [400, 420, 450, 470, 500];
-  const cashback = possible[Math.floor(Math.random() * possible.length)];
+  currentCashback = possible[Math.floor(Math.random() * possible.length)];
+
   currentRotation += 1440 + Math.floor(Math.random() * 720);
   wheel.style.transform = `rotate(${currentRotation}deg)`;
+
   setTimeout(() => {
-    cashbackResult.textContent = `Seu cashback: ${brl.format(cashback)}`;
+    cashbackResult.textContent = `Seu cashback: ${brl.format(currentCashback)}`;
     spinBtn.disabled = false;
+    updateWhatsAppLinks(getProjection());
   }, 3250);
 });
 
