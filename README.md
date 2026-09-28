@@ -1,10 +1,40 @@
 # Sincerus Scale — Simulador de investimento
 
-Projeto estático e pronto para hospedagem do simulador Sincerus Scale.
+Projeto do simulador Sincerus Scale preparado para deploy pela Hostinger via GitHub.
+
+## Contatos oficiais
+
+- Instagram: https://www.instagram.com/sincerus.rico/
+- WhatsApp: +55 83 99905-4165
+
+Todos os botões de WhatsApp usam o mesmo número oficial e geram uma mensagem personalizada com os dados preenchidos pelo cliente e com os números da projeção.
+
+## Personalização da mensagem
+
+Antes de abrir o WhatsApp, o cliente informa:
+
+- Nome
+- Nome da loja
+
+A mensagem inclui automaticamente:
+
+- Nome e loja
+- Investimento mensal
+- Cenário base
+- Conversas estimadas
+- Conversas por dia
+- CAC em mídia
+- Margem por aparelho, quando informada
+- Lucro bruto
+- Lucro líquido
+- ROAS
+- Cashback, caso o cliente já tenha girado a roleta
+
+Se nome ou loja estiverem vazios, o botão do WhatsApp não abre e o site leva o cliente aos campos obrigatórios.
 
 ## Nomenclaturas financeiras
 
-Foram usados estes rótulos na seção financeira:
+Os rótulos usados são:
 
 - **Lucro bruto**
 - **Lucro líquido**
@@ -17,33 +47,32 @@ As fórmulas permanecem:
 
 ## Deploy na Hostinger via GitHub
 
-O projeto é 100% estático. Não precisa de Node.js, banco de dados, variáveis de ambiente ou comando de build.
+O repositório agora inclui `package.json` e configuração Vite para que o fluxo **Deploy Web App → Import Git Repository** da Hostinger reconheça o projeto.
 
-Use:
+Configuração:
 
 - Repositório: `KaioTriani/Sincerus-Scale-calculator`
 - Branch: `main`
-- Build command: nenhum
+- Node.js: `20.x`
+- Build command: `npm run build`
+- Output directory: `dist`
+- Start command, se o painel solicitar: `npm start`
+
+### Se a Hostinger mostrar “Implante como estático”
+
+Também é válido usar essa opção, pois o produto final é um site HTML/CSS/JavaScript estático.
+
+Para hospedagem estática tradicional:
+
+- Branch: `main`
 - Arquivo inicial: `index.html`
-- Diretório público: raiz do projeto (ou o diretório que a Hostinger mapear para `public_html`)
-
-### Passos gerais
-
-1. No hPanel da Hostinger, abra o site/domínio.
-2. Entre na área de Git/Deploy pelo GitHub.
-3. Conecte sua conta do GitHub.
-4. Selecione `KaioTriani/Sincerus-Scale-calculator`.
-5. Selecione a branch `main`.
-6. Não configure comando de build.
-7. Publique a raiz do repositório.
+- Pasta de destino: `public_html`
 
 ## Estrutura
 
-- `index.html` — página do simulador
+- `index.html` — página e campos do cliente
 - `styles.css` — identidade visual e responsividade
-- `app.js` — cálculos e interações
+- `app.js` — cálculos, roleta e mensagem personalizada do WhatsApp
+- `package.json` — scripts e dependências para a Hostinger
+- `vite.config.js` — build para `dist`
 - `.gitignore` — arquivos locais ignorados
-
-## Observação sobre os links de contato
-
-Os botões de Instagram e WhatsApp estão funcionais como links, porém usam destinos genéricos no código. Substitua-os pelos links oficiais da Sincerus no `index.html` caso deseje apontar para os perfis definitivos.
