@@ -1,5 +1,11 @@
 # Sincerus Scale — Calculadora
 
+## Página exclusiva para tráfego do TikTok
+
+Acesse `/roleta/` no mesmo domínio. A página tem uma entrada HTML própria, funciona ao abrir o link diretamente ou atualizar a página e não depende de redirecionamento de SPA. Não há links no simulador apontando para ela. Inclui `noindex, nofollow`; é uma página pública não listada, não uma área com autenticação.
+
+São oito setores elegíveis: quatro de R$ 200 e quatro de R$ 300. Os dois valores têm chances iguais. O prêmio fica guardado neste navegador e segue na mensagem do WhatsApp. O armazenamento local evita novos giros casuais, mas não é um sistema de validação de resgates; a equipe confirma a utilização pelo WhatsApp. Não há cobrança para girar.
+
 Site completo em React + Vite, responsivo, com simulação em tempo real, roleta e resumo para WhatsApp. Não exige banco de dados, chaves de API ou serviços da hospedagem anterior.
 
 ## Importar na Hostinger
