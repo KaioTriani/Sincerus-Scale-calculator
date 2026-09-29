@@ -1,78 +1,43 @@
-# Sincerus Scale — Simulador de investimento
+# Sincerus Scale — Calculadora
 
-Projeto do simulador Sincerus Scale preparado para deploy pela Hostinger via GitHub.
+Site completo em React + Vite, responsivo, com simulação em tempo real, roleta e resumo para WhatsApp. Não exige banco de dados, chaves de API ou serviços da hospedagem anterior.
 
-## Contatos oficiais
+## Importar na Hostinger
 
-- Instagram: https://www.instagram.com/sincerus.rico/
-- WhatsApp: +55 83 99905-4165
+No hPanel: **Sites → Adicionar site → Aplicativo web Node.js → Importar do GitHub**. Selecione este repositório e a branch **main**. Requer um plano com Aplicativos web Node.js (Business ou Cloud, conforme disponibilidade na conta).
 
-Todos os botões de WhatsApp usam o mesmo número oficial e geram uma mensagem personalizada com os dados preenchidos pelo cliente e com os números da projeção.
+Configuração de build:
 
-## Personalização da mensagem
+| Campo | Valor |
+|---|---|
+| Framework | Vite |
+| Node.js | 22 (22.13 ou superior) |
+| Diretório raiz | ./ |
+| Gerenciador | npm |
+| Instalação | npm install |
+| Build | npm run build |
+| Diretório de saída | dist |
+| Variáveis de ambiente | Nenhuma |
 
-Antes de abrir o WhatsApp, o cliente informa:
+O resultado é estático: a Hostinger serve o diretório dist, sem servidor Node permanente. Não use a integração Git de hospedagem PHP para publicar o código-fonte sem executar o build. Alternativa: executar o build local e enviar o conteúdo de dist para public_html.
 
-- Nome
-- Nome da loja
+Guia oficial: https://www.hostinger.com/support/how-to-deploy-a-nodejs-website-in-hostinger/
 
-A mensagem inclui automaticamente:
+## Rodar localmente
 
-- Nome e loja
-- Investimento mensal
-- Cenário base
-- Conversas estimadas
-- Conversas por dia
-- CAC em mídia
-- Margem por aparelho, quando informada
-- Lucro bruto
-- Lucro líquido
-- ROAS
-- Cashback, caso o cliente já tenha girado a roleta
-
-Se nome ou loja estiverem vazios, o botão do WhatsApp não abre e o site leva o cliente aos campos obrigatórios.
-
-## Nomenclaturas financeiras
-
-Os rótulos usados são:
-
-- **Lucro bruto**
-- **Lucro líquido**
-
-As fórmulas permanecem:
-
-- Lucro bruto = vendas estimadas no cenário Base × margem por aparelho
-- Lucro líquido = lucro bruto − investimento em mídia
-- ROAS = lucro bruto ÷ investimento em mídia
-
-## Deploy na Hostinger via GitHub
-
-O repositório agora inclui `package.json` e configuração Vite para que o fluxo **Deploy Web App → Import Git Repository** da Hostinger reconheça o projeto.
-
-Configuração:
-
-- Repositório: `KaioTriani/Sincerus-Scale-calculator`
-- Branch: `main`
-- Node.js: `20.x`
-- Build command: `npm run build`
-- Output directory: `dist`
-- Start command, se o painel solicitar: `npm start`
-
-### Se a Hostinger mostrar “Implante como estático”
-
-Também é válido usar essa opção, pois o produto final é um site HTML/CSS/JavaScript estático.
-
-Para hospedagem estática tradicional:
-
-- Branch: `main`
-- Arquivo inicial: `index.html`
-- Pasta de destino: `public_html`
+Instale Node.js 22.13+; execute npm install, npm run dev. Para produção: npm run build. Para verificar: npm test e npm run preview.
 
 ## Estrutura
 
-- `index.html` — página e campos do cliente
-- `styles.css` — identidade visual e responsividade
-- `app.js` — cálculos, roleta e mensagem personalizada do WhatsApp
-- `package.json` — scripts e dependências para a Hostinger
-- `vite.config.js` — build para `dist`
-- `.gitignore` — arquivos locais ignorados
+- components: SplashScreen, Header, Simulador, FinanceResults, RoletaCashback e WhatsAppButton.
+- lib/simulation.ts: cálculos e sorteio.
+- lib/whatsapp.ts: mensagem e URL Encoding.
+- lib/brand.ts: contatos e identidade da marca.
+- app/globals.css: estilos responsivos.
+- public: logo e favicon.
+
+## Nomes dos indicadores
+
+Somente os rótulos foram alterados: Margem acumulada → Lucro bruto; Lucro após mídia → Lucro líquido. As fórmulas permanecem idênticas: bruto = vendas estimadas × margem por aparelho; líquido = bruto − investimento em anúncios; ROAS do modelo = bruto ÷ investimento. O modelo não desconta outras despesas da loja automaticamente.
+
+Mínimo de R$ 1.500; seis valores distintos de cashback entre R$ 400 e R$ 500, exibidos no pop-up ao avançar para o WhatsApp. O sorteio ocorre no navegador; não há registro persistente de resgates. WhatsApp: +55 (83) 99905-4165.

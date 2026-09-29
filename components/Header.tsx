@@ -1,0 +1,6 @@
+'use client';
+import { MessageCircle, ArrowUpRight } from 'lucide-react';
+import { BRAND } from '@/lib/brand';
+function Instagram({size=19}:{size?:number}) { return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.5" cy="6.5" r=".8" fill="currentColor" stroke="none"/></svg>; }
+export function Logo() { return <span className="brand"><img src="/logo-mark.png" alt="" width="44" height="40" /><span>SINCERUS<span className="brand-scale">SCALE</span></span></span>; }
+export function Header() { return <header className="header"><a href="#main" aria-label="Sincerus Scale, início"><Logo /></a><span className="header-label">INTELIGÊNCIA PARA CRESCER</span><nav aria-label="Redes sociais"><a className="social-link" href={BRAND.instagram} target="_blank" rel="noreferrer" aria-label="Instagram da Sincerus"><Instagram size={19}/></a>{BRAND.whatsapp ? <a className="contact" href={`https://wa.me/${BRAND.whatsapp}`} target="_blank" rel="noreferrer"><MessageCircle size={17}/> Fale com a Sincerus <ArrowUpRight size={15}/></a> : <span className="contact"><MessageCircle size={17}/><span>Contato em breve</span></span>}</nav></header>; }
