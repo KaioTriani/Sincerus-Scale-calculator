@@ -1,5 +1,5 @@
-import { useRef, useState } from 'react';
-import { motion, useReducedMotion } from 'motion/react';
+import { useEffect, useRef, useState } from 'react';
+import { animate, motion, useMotionValue, useMotionValueEvent, useReducedMotion } from 'motion/react';
 import { ArrowUpRight, Check, Gift, Sparkles } from 'lucide-react';
 import { BRAND } from '../lib/brand';
 import { CAMPAIGN_KEY, CAMPAIGN_PRIZES, campaignDraw, campaignWhatsApp } from '../lib/campaign';
@@ -19,6 +19,19 @@ export function CampaignWheel() {
   const pending = useRef<number | null>(null);
   const locked = useRef(reward !== null);
   const reduced = useReducedMotion();
+  const discAngle = useMotionValue(rotation);
+  const pointerAngle = useMotionValue(0);
+  const lastSector = useRef(0);
+  const pointerAnimation = useRef<{ stop: () => void } | null>(null);
+  useEffect(() => () => pointerAnimation.current?.stop(), []);
+  useMotionValueEvent(discAngle, 'change', angle => {
+    const sector = Math.floor(angle / 45);
+    if (pending.current === null || reduced || sector === lastSector.current) return;
+    lastSector.current = sector;
+    pointerAnimation.current?.stop();
+    pointerAngle.set(-18);
+    pointerAnimation.current = animate(pointerAngle, 0, { type: 'spring', stiffness: 650, damping: 18 });
+  });
   function spin() {
     if (locked.current) return;
     locked.current = true;
@@ -41,11 +54,16 @@ export function CampaignWheel() {
       <h1>{reward === null ? <>Um giro.<br /><em>Uma boa surpresa.</em></> : <>Esse giro<br /><em>foi seu.</em></>}</h1>
       <p className="campaign-intro">{reward === null ? 'Seu cashback está a um toque de distância.' : 'Seu benefício já está aqui. Agora é com você.'}</p>
       <div className={`campaign-stage ${spinning ? 'is-spinning' : ''}`}>
-        <div className="campaign-orbit" aria-hidden="true" />
-        <div className="campaign-pointer" aria-hidden="true"><span /></div>
+        <motion.div className="campaign-orbit" aria-hidden="true"
+          animate={{scale:spinning && !reduced ? [1,1.045,1] : 1,opacity:spinning && !reduced ? [.45,1,.45] : 1}}
+          transition={{duration:1.5,repeat:spinning && !reduced ? Infinity : 0}} />
+        <motion.div className="campaign-pointer" style={{rotate:pointerAngle,transformOrigin:'50% 15%'}} aria-hidden="true"><span /></motion.div>
         <div className="campaign-rim">
           <div className="campaign-lights" aria-hidden="true">{Array.from({length:32},(_,i)=><i key={i} style={{transform:`rotate(${i*11.25}deg)`}}><b /></i>)}</div>
-          <motion.div className="campaign-disc" animate={{rotate:rotation}} transition={{duration:reduced ? .01 : 5.6,ease:[.12,.78,.08,1]}} onAnimationComplete={finish} aria-hidden="true">
+          <motion.div className="campaign-disc" style={{rotate:discAngle}}
+            animate={{rotate:spinning && !reduced ? [0,-14,rotation*.72,rotation-45,rotation+3,rotation] : rotation}}
+            transition={spinning && !reduced ? {duration:7,times:[0,.07,.49,.78,.95,1],ease:['easeInOut','easeInOut','easeOut','easeOut','easeInOut']} : {duration:0}}
+            onAnimationComplete={finish} aria-hidden="true">
             <svg viewBox="0 0 400 400" role="presentation">
               {CAMPAIGN_PRIZES.map((amount,i)=>{
                 const start=point(i*45,198),end=point((i+1)*45,198);
@@ -80,3 +98,4 @@ export function CampaignWheel() {
     </section>
   </main>;
 }
+
