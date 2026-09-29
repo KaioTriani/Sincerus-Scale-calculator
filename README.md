@@ -6,6 +6,10 @@ Acesse `/roleta/` no mesmo domínio. A página tem uma entrada HTML própria, fu
 
 São oito setores elegíveis: quatro de R$ 200 e quatro de R$ 300. Os dois valores têm chances iguais. O prêmio fica guardado neste navegador e segue na mensagem do WhatsApp. O armazenamento local evita novos giros casuais, mas não é um sistema de validação de resgates; a equipe confirma a utilização pelo WhatsApp. Não há cobrança para girar.
 
+O módulo `lib/campaign-claim.ts` grava o resultado antes da animação, preserva participações antigas e recusa novos giros quando o armazenamento falha. O componente usa Web Locks quando disponível para serializar giros entre abas, além do evento `storage` para sincronizar o resultado. Ao parar, mostra um painel sobre a roda com foco no link do WhatsApp. Não existe opção de repetir.
+
+Esse controle é por perfil de navegador, não por aparelho: apagar os dados, usar outro navegador ou alterar o código pode contorná-lo. Fingerprinting não resolve essa limitação. Resgates com garantia antifraude exigem backend, identidade verificada e registro único validado no servidor. Nenhuma mensagem é enviada automaticamente; o usuário confirma no WhatsApp.
+
 Site completo em React + Vite, responsivo, com simulação em tempo real, roleta e resumo para WhatsApp. Não exige banco de dados, chaves de API ou serviços da hospedagem anterior.
 
 ## Importar na Hostinger

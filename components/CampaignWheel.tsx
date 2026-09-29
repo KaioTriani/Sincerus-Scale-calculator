@@ -2,10 +2,12 @@ import { useEffect, useRef, useState } from 'react';
 import { animate, motion, useMotionValue, useMotionValueEvent, useReducedMotion } from 'motion/react';
 import { ArrowUpRight, Check, Gift, Sparkles } from 'lucide-react';
 import { BRAND } from '../lib/brand';
-import { CAMPAIGN_KEY, CAMPAIGN_PRIZES, campaignDraw, campaignWhatsApp } from '../lib/campaign';
+import { CAMPAIGN_KEY, CAMPAIGN_PRIZES, campaignWhatsApp } from '../lib/campaign';
+import { claimCampaign, readCampaignClaim, prizeRotation } from '../lib/campaign-claim';
 
-function savedPrize(): number | null {
-  try { const amount = Number(localStorage.getItem(CAMPAIGN_KEY)); return amount === 200 || amount === 300 ? amount : null; } catch { return null; }
+function savedState() {
+  try { return { claim: readCampaignClaim(localStorage), error: '' }; }
+  catch { return { claim: null, error: 'Não conseguimos verificar sua participação. Continue pelo WhatsApp.' }; }
 }
 function point(degrees: number, radius: number) {
   const angle = (degrees - 90) * Math.PI / 180;
@@ -13,16 +15,34 @@ function point(degrees: number, radius: number) {
 }
 
 export function CampaignWheel() {
-  const [reward, setReward] = useState<number | null>(savedPrize);
+  const [initial] = useState(savedState);
+  const [reward, setReward] = useState<number | null>(initial.claim?.amount ?? null);
+  const [storageError, setStorageError] = useState(initial.error);
+  const [reserving, setReserving] = useState(false);
   const [spinning, setSpinning] = useState(false);
-  const [rotation, setRotation] = useState(() => reward === null ? 0 : 360 - ((reward === 200 ? 0 : 1) * 45 + 22.5));
+  const [rotation, setRotation] = useState(() => initial.claim ? prizeRotation(initial.claim.index, 0) : 0);
   const pending = useRef<number | null>(null);
-  const locked = useRef(reward !== null);
+  const locked = useRef(reward !== null || !!initial.error);
+  const resultLink = useRef<HTMLAnchorElement>(null);
   const reduced = useReducedMotion();
   const discAngle = useMotionValue(rotation);
   const pointerAngle = useMotionValue(0);
   const lastSector = useRef(0);
   const pointerAnimation = useRef<{ stop: () => void } | null>(null);
+  useEffect(() => {
+    function sync(event: StorageEvent) {
+      if (event.key !== CAMPAIGN_KEY && event.key !== null) return;
+      try {
+        const claim = readCampaignClaim(localStorage);
+        if (claim && pending.current === null) {
+          locked.current = true; setReward(claim.amount); setRotation(prizeRotation(claim.index, 0));
+        }
+      } catch { locked.current = true; setStorageError('Não conseguimos verificar sua participação. Continue pelo WhatsApp.'); }
+    }
+    window.addEventListener('storage', sync);
+    return () => window.removeEventListener('storage', sync);
+  }, []);
+  useEffect(() => { if (reward !== null) resultLink.current?.focus({ preventScroll: true }); }, [reward]);
   useEffect(() => () => pointerAnimation.current?.stop(), []);
   useMotionValueEvent(discAngle, 'change', angle => {
     const sector = Math.floor(angle / 45);
@@ -32,15 +52,23 @@ export function CampaignWheel() {
     pointerAngle.set(-18);
     pointerAnimation.current = animate(pointerAngle, 0, { type: 'spring', stiffness: 650, damping: 18 });
   });
-  function spin() {
+  async function spin() {
     if (locked.current) return;
     locked.current = true;
-    const draw = campaignDraw();
-    pending.current = draw.amount;
-    // Save at draw time so reloading during the animation keeps the same result.
-    try { localStorage.setItem(CAMPAIGN_KEY, String(draw.amount)); } catch { /* Works without storage too. */ }
-    setSpinning(true);
-    setRotation(draw.rotation);
+    setReserving(true);
+    try {
+      // Web Locks serializes simultaneous participation across same-origin tabs.
+      const result = navigator.locks
+        ? await navigator.locks.request(CAMPAIGN_KEY, () => claimCampaign(localStorage))
+        : claimCampaign(localStorage);
+      if (!result.fresh) {
+        setReward(result.claim.amount); setRotation(prizeRotation(result.claim.index, 0)); return;
+      }
+      pending.current = result.claim.amount;
+      setSpinning(true); setRotation(prizeRotation(result.claim.index));
+    } catch {
+      setStorageError('Não conseguimos registrar sua participação. Continue pelo WhatsApp.');
+    } finally { setReserving(false); }
   }
   function finish() {
     if (pending.current === null) return;
@@ -53,7 +81,7 @@ export function CampaignWheel() {
       <div className="campaign-badge"><span /> EDIÇÃO EXCLUSIVA</div>
       <h1>{reward === null ? <>Um giro.<br /><em>Uma boa surpresa.</em></> : <>Esse giro<br /><em>foi seu.</em></>}</h1>
       <p className="campaign-intro">{reward === null ? 'Seu cashback está a um toque de distância.' : 'Seu benefício já está aqui. Agora é com você.'}</p>
-      <div className={`campaign-stage ${spinning ? 'is-spinning' : ''}`}>
+      <div className={`campaign-stage ${spinning ? 'is-spinning' : ''} ${reward !== null ? 'has-result' : ''}`}>
         <motion.div className="campaign-orbit" aria-hidden="true"
           animate={{scale:spinning && !reduced ? [1,1.045,1] : 1,opacity:spinning && !reduced ? [.45,1,.45] : 1}}
           transition={{duration:1.5,repeat:spinning && !reduced ? Infinity : 0}} />
@@ -81,21 +109,26 @@ export function CampaignWheel() {
           <div className="campaign-hub" aria-hidden="true"><img src="/logo-mark.png" alt="" /><span>SEU GIRO</span></div>
         </div>
         {reward !== null && !reduced && <div className="campaign-confetti" aria-hidden="true">{Array.from({length:20},(_,i)=><i key={i} style={{left:`${5+i*4.7}%`,background:i%3===0?'#f8f8f8':'#f76001',animationDelay:`${i%5*.08}s`,transform:`rotate(${i*37}deg)`}} />)}</div>}
+        {reward !== null && <motion.div className="campaign-result campaign-result-panel" role="region" aria-label="Resultado da roleta" aria-live="polite"
+          initial={{opacity:0,scale:reduced?1:.88,y:reduced?0:18}} animate={{opacity:1,scale:1,y:0}} transition={{type:'spring',stiffness:260,damping:23}}>
+          <div className="campaign-result-seal"><Check size={24}/></div>
+          <span className="campaign-result-label">SEU CASHBACK ESTÁ RESERVADO</span>
+          <strong><small>R$</small> {reward}<span>,00</span></strong>
+          <a ref={resultLink} className="campaign-cta" href={campaignWhatsApp(BRAND.whatsapp,reward)} target="_blank" rel="noopener noreferrer">CONCLUIR NO WHATSAPP<ArrowUpRight size={19}/></a>
+          <span className="campaign-micro">Seu resultado já vai na mensagem.</span>
+        </motion.div>}
       </div>
       <div className="campaign-action" aria-live="polite" aria-atomic="true">
-        {reward === null ? <>
+        {storageError && reward === null ? <>
+          <p className="campaign-hint" role="alert">{storageError}</p>
+          <a className="campaign-cta" href={`https://wa.me/${BRAND.whatsapp}?text=${encodeURIComponent('Olá! Preciso de ajuda para verificar minha participação na roleta do TikTok.')}`} target="_blank" rel="noopener noreferrer">FALAR COM A SINCERUS<ArrowUpRight size={19}/></a>
+        </> : reward === null ? <>
           <p className="campaign-hint"><Sparkles size={14}/>{spinning ? 'Preparando sua surpresa…' : 'R$ 200 ou R$ 300. Qual vai ser o seu?'}</p>
-          <button className="campaign-cta" onClick={spin} disabled={spinning}><Gift size={20}/>{spinning ? 'GIRANDO…' : 'QUERO GIRAR'}<ArrowUpRight size={21}/></button>
+          <button className="campaign-cta" onClick={spin} disabled={spinning || reserving}><Gift size={20}/>{reserving ? 'RESERVANDO…' : spinning ? 'GIRANDO…' : 'QUERO GIRAR'}<ArrowUpRight size={21}/></button>
           <span className="campaign-micro">{spinning ? 'Aguarde o giro terminar.' : 'Toque, gire e descubra.'}</span>
-        </> : <motion.div initial={{opacity:0,y:reduced?0:14}} animate={{opacity:1,y:0}} className="campaign-result">
-          <span className="campaign-result-label"><Check size={15}/> SEU CASHBACK EXCLUSIVO</span>
-          <strong><small>R$</small> {reward}<span>,00</span></strong>
-          <a className="campaign-cta" href={campaignWhatsApp(BRAND.whatsapp,reward)} target="_blank" rel="noopener noreferrer">QUERO MEU CASHBACK<ArrowUpRight size={21}/></a>
-          <span className="campaign-micro">Continue pelo WhatsApp para combinar o resgate.</span>
-        </motion.div>}
+        </> : <p className="campaign-claimed-note">Você já participou neste navegador.<br />Conclua seu atendimento no WhatsApp.</p>}
       </div>
       <p className="campaign-terms">Prêmios desta roleta: R$ 200 ou R$ 300 de cashback, com chances iguais. Condições de utilização confirmadas com a Sincerus pelo WhatsApp.</p>
     </section>
   </main>;
 }
-
