@@ -1,24 +1,19 @@
-# Sincerus Scale — Calculadora
+# Sincerus Scale — Calculadora e roleta
 
-## Página exclusiva para tráfego do TikTok
+Projeto preparado para importação do GitHub pela Hostinger.
 
-Acesse `/roleta/` no mesmo domínio. A página tem uma entrada HTML própria, funciona ao abrir o link diretamente ou atualizar a página e não depende de redirecionamento de SPA. Não há links no simulador apontando para ela. Inclui `noindex, nofollow`; é uma página pública não listada, não uma área com autenticação.
+## Endereços
 
-São oito setores elegíveis: quatro de R$ 200 e quatro de R$ 300. Os dois valores têm chances iguais. O prêmio fica guardado neste navegador e segue na mensagem do WhatsApp. O armazenamento local evita novos giros casuais, mas não é um sistema de validação de resgates; a equipe confirma a utilização pelo WhatsApp. Não há cobrança para girar.
+- `https://sincerusscale.com.br/`: simulador principal.
+- `https://sincerusscale.com.br/roleta/`: roleta independente.
 
-O módulo `lib/campaign-claim.ts` grava o resultado antes da animação, preserva participações antigas e recusa novos giros quando o armazenamento falha. O componente usa Web Locks quando disponível para serializar giros entre abas, além do evento `storage` para sincronizar o resultado. Ao parar, mostra um painel sobre a roda com foco no link do WhatsApp. Não existe opção de repetir.
+`/roleta/` é um caminho no mesmo domínio, não um subdomínio. Não precisa criar outro registro DNS. A página não aparece nos menus ou links do simulador. O HTML contém `noindex, nofollow`, mas a URL é pública: qualquer pessoa que conheça o endereço pode abri-la.
 
-Esse controle é por perfil de navegador, não por aparelho: apagar os dados, usar outro navegador ou alterar o código pode contorná-lo. Fingerprinting não resolve essa limitação. Resgates com garantia antifraude exigem backend, identidade verificada e registro único validado no servidor. Nenhuma mensagem é enviada automaticamente; o usuário confirma no WhatsApp.
+## Publicar na Hostinger
 
-Site completo em React + Vite, responsivo, com simulação em tempo real, roleta e resumo para WhatsApp. Não exige banco de dados, chaves de API ou serviços da hospedagem anterior.
+No hPanel, use **Adicionar site → Aplicativo web Node.js / Deploy Web App → Importar do GitHub**, selecione este repositório e a branch **main**. Se já houver uma aplicação conectada a este repositório, faça um novo deploy.
 
-## Importar na Hostinger
-
-No hPanel: **Sites → Adicionar site → Aplicativo web Node.js → Importar do GitHub**. Selecione este repositório e a branch **main**. Requer um plano com Aplicativos web Node.js (Business ou Cloud, conforme disponibilidade na conta).
-
-Configuração de build:
-
-| Campo | Valor |
+| Configuração | Valor |
 |---|---|
 | Framework | Vite |
 | Node.js | 22 (22.13 ou superior) |
@@ -26,28 +21,41 @@ Configuração de build:
 | Gerenciador | npm |
 | Instalação | npm install |
 | Build | npm run build |
-| Diretório de saída | dist |
+| Pasta de saída | dist |
 | Variáveis de ambiente | Nenhuma |
 
-O resultado é estático: a Hostinger serve o diretório dist, sem servidor Node permanente. Não use a integração Git de hospedagem PHP para publicar o código-fonte sem executar o build. Alternativa: executar o build local e enviar o conteúdo de dist para public_html.
+Associe a aplicação ao domínio `sincerusscale.com.br` no painel. O plano precisa oferecer importação de aplicações Node.js. O build é estático; não é necessário servidor Node permanente para atender as páginas.
+
+O build gera **dist/index.html** e **dist/roleta/index.html**. Não configure a pasta raiz do projeto como `roleta`: isso publicaria somente a roleta na raiz do domínio.
+
+Se usar hospedagem de arquivos estáticos, envie o conteúdo completo de `dist` para `public_html`, preservando `assets` e `roleta`. Abrir diretamente `/roleta/` funciona sem roteador React ou regras especiais de SPA.
 
 Guia oficial: https://www.hostinger.com/support/how-to-deploy-a-nodejs-website-in-hostinger/
 
-## Rodar localmente
+## Código da roleta
 
-Instale Node.js 22.13+; execute npm install, npm run dev. Para produção: npm run build. Para verificar: npm test e npm run preview.
+**O arquivo ativo é `roleta/index.html`**, uma cópia completa de `roleta_sincerus_animacao_melhorada.html`, com CSS e JavaScript embutidos. Ele usa Web Animations API, tem aceleração contínua, desaceleração progressiva, ponteiro sincronizado e destaque do setor ao terminar.
 
-## Estrutura
+O HTML informa que somente R$ 200 e R$ 300 são resultados disponíveis; os demais setores permanecem identificados como ilustrativos. O resultado e a participação são registrados no navegador. Esse controle e o fingerprint básico não são validação antifraude no servidor e não garantem unicidade por aparelho.
 
-- components: SplashScreen, Header, Simulador, FinanceResults, RoletaCashback e WhatsAppButton.
-- lib/simulation.ts: cálculos e sorteio.
-- lib/whatsapp.ts: mensagem e URL Encoding.
-- lib/brand.ts: contatos e identidade da marca.
-- app/globals.css: estilos responsivos.
-- public: logo e favicon.
+O arquivo mantém o comportamento original de abrir o WhatsApp após o resultado: `AUTO_REDIRECT = true`, com atraso de 2500 ms. O botão também permite continuar manualmente. Para usar somente o botão, altere essa constante para `false`.
 
-## Nomes dos indicadores
+Os antigos `components/CampaignWheel.tsx`, `lib/campaign*.ts` e `roleta/main.tsx` foram preservados como código anterior, mas não são carregados por esta página. Não é necessário editá-los para alterar a roleta atual.
 
-Somente os rótulos foram alterados: Margem acumulada → Lucro bruto; Lucro após mídia → Lucro líquido. As fórmulas permanecem idênticas: bruto = vendas estimadas × margem por aparelho; líquido = bruto − investimento em anúncios; ROAS do modelo = bruto ÷ investimento. O modelo não desconta outras despesas da loja automaticamente.
+## Desenvolvimento
 
-Mínimo de R$ 1.500; seis valores distintos de cashback entre R$ 400 e R$ 500, exibidos no pop-up ao avançar para o WhatsApp. O sorteio ocorre no navegador; não há registro persistente de resgates. WhatsApp: +55 (83) 99905-4165.
+```sh
+npm install
+npm run dev
+npm test
+npm run build
+npm run preview
+```
+
+Use `/roleta/` no servidor local para abrir a campanha. O simulador continua em `/`.
+
+## Simulador principal
+
+Mantém a calculadora, splash, modal próprio de cashback e WhatsApp. Os nomes financeiros são **Lucro bruto** e **Lucro líquido**, com as fórmulas originais preservadas: bruto = vendas estimadas × margem por aparelho; líquido = bruto − investimento em anúncios; ROAS do modelo = bruto ÷ investimento. Outras despesas não são descontadas automaticamente.
+
+WhatsApp comercial: +55 (83) 99905-4165.
