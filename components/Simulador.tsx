@@ -3,7 +3,6 @@ import { useMemo, useState } from 'react';
 import { ArrowUpRight, SlidersHorizontal, ShieldCheck, Info, TrendingUp } from 'lucide-react';
 import { motion } from 'motion/react';
 import { Header } from './Header';
-import { SplashScreen } from './SplashScreen';
 import { Slider } from './ui/slider';
 import { RoletaCashback } from './RoletaCashback';
 import { FinanceResults } from './FinanceResults';
@@ -24,7 +23,6 @@ export function Simulador() {
   useSimulationTool(sim, result.error);
 
   return <>
-    <SplashScreen />
     <Header />
     <main id="main" className="main">
       <div className="intro">

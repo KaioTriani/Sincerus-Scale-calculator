@@ -10,6 +10,23 @@
   <style>
     * { box-sizing: border-box; }
 
+    @keyframes page-enter {
+      from { opacity: .35; transform: translateY(10px); }
+      to { opacity: 1; transform: none; }
+    }
+
+    @media (prefers-reduced-motion: no-preference) {
+      .content > .brand, .content > .badge, .content > h1,
+      .content > .intro, .content > .stage, .content > .actions,
+      .content > .terms, .content > .visual-note {
+        animation: page-enter .5s cubic-bezier(.2,.7,.2,1) backwards;
+      }
+      .content > .badge, .content > h1, .content > .intro { animation-delay: .04s; }
+      .content > .stage { animation-delay: .08s; }
+      .content > .actions { animation-delay: .12s; }
+      .content > .terms, .content > .visual-note { animation-delay: .16s; }
+    }
+
     :root {
       color-scheme: dark;
       --orange: #f76001;
@@ -1060,4 +1077,3 @@
   </script>
 </body>
 </html>
-
