@@ -46,7 +46,7 @@ No hPanel: **Sites → Adicionar site → Aplicativo web Node.js → Importar re
 | Node.js | 22.x (22.12 ou superior) |
 | Diretório raiz | `./` |
 | Comando de instalação | `npm install` |
-| Comando de build | `npm run build` |
+| Comando de build | `npm run build` (na predefinição Express o campo some; o build roda sozinho no `postinstall`) |
 | Arquivo de entrada | `server.js` |
 | Comando de início (se o painel pedir) | `npm start` |
 | Pasta de saída (se o painel pedir) | `dist` |
