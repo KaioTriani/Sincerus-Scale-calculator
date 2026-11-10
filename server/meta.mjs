@@ -7,13 +7,24 @@ export const configured = () => !!process.env.META_ACCESS_TOKEN;
 const cache = new Map();
 const TTL = 10 * 60 * 1000;
 
+// Falhas de rede momentâneas ("fetch failed") ganham mais 2 tentativas antes de virar erro na tela
+async function fetchRetry(url, tries = 3) {
+  for (let i = 1; ; i++) {
+    try { return await fetch(url, { signal: AbortSignal.timeout(30000) }); }
+    catch (e) {
+      if (i >= tries) throw Object.assign(new Error('Não foi possível falar com a API da Meta agora (falha de rede). Tente "Atualizar da Meta" em instantes.'), { status: 504 });
+      await new Promise((r) => setTimeout(r, 600 * i));
+    }
+  }
+}
+
 async function graph(path, params = {}, { all = true } = {}) {
   if (!configured()) throw Object.assign(new Error('A API da Meta não está configurada no servidor (META_ACCESS_TOKEN).'), { status: 503 });
   const qs = new URLSearchParams({ ...params, access_token: process.env.META_ACCESS_TOKEN });
   let url = `${base()}/${version()}/${path}?${qs}`;
   const out = [];
   for (let page = 0; url && page < 20; page++) {
-    const res = await fetch(url);
+    const res = await fetchRetry(url);
     const json = await res.json().catch(() => ({}));
     if (!res.ok || json.error) {
       const e = json.error || {};

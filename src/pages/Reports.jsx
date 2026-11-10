@@ -27,7 +27,10 @@ const withKeys = (c) => ({ key: uid(), open: true, ...c, ads: c.ads.map((a) => (
 const nfmt = (v, d = 2) => (v == null || v === '' ? '' : Number(v).toLocaleString('pt-BR', { minimumFractionDigits: 0, maximumFractionDigits: d }));
 
 function loadDraft() {
-  try { const d = JSON.parse(localStorage.getItem(DRAFT_KEY)); if (d?.campaigns) return d; } catch { /* sem rascunho */ }
+  try {
+    const d = JSON.parse(localStorage.getItem(DRAFT_KEY));
+    if (d?.campaigns) return { ...d, hidden: (d.hidden || []).map((c) => (c.hid ? c : { ...c, hid: uid() })) };
+  } catch { /* sem rascunho */ }
   return EMPTY();
 }
 
@@ -36,9 +39,9 @@ const inputCls = 'w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 
 function Label({ children, hint }) {
   return <span className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-white/45">{children}{hint && <span className="ml-1 normal-case tracking-normal text-white/30">{hint}</span>}</span>;
 }
-function Card({ step, title, sub, children, right }) {
+function Card({ step, title, sub, children, right, className = "" }) {
   return (
-    <Reveal className="glass p-5 sm:p-6">
+    <Reveal className={`glass p-5 sm:p-6 ${className}`}>
       <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
         <div className="flex items-start gap-3">
           <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full border border-brand/40 bg-brand/10 font-display text-xs font-bold text-brand-300">{step}</span>
@@ -287,12 +290,12 @@ function ClientMenu({ value, onSelect }) {
       </button>
       <AnimatePresence>
         {open && (
-          <motion.div initial={{ opacity: 0, y: -6, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: -6, scale: 0.98 }} className="glass-strong absolute left-0 right-0 z-30 mt-2 p-2">
+          <motion.div initial={{ opacity: 0, y: -6, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: -6, scale: 0.98 }} className="glass-strong absolute left-0 right-0 z-30 mt-2 bg-carbon-800! p-2 shadow-2xl">
             <label className="relative mb-1 block">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/35" />
               <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Buscar cliente" className="w-full rounded-xl border border-white/10 bg-white/[0.04] py-2 pl-9 pr-3 text-sm outline-none focus:border-brand/50" />
             </label>
-            <ul className="scrollbar-thin max-h-72 overflow-y-auto">
+            <ul className="scrollbar-thin max-h-[min(18rem,50vh)] overflow-y-auto overscroll-contain pr-1">
               {list.map((c) => (
                 <li key={c.id}>
                   <button type="button" onClick={() => { setOpen(false); onSelect(c); }} className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition hover:bg-white/[0.06] ${c.id === value ? 'bg-brand/10' : ''}`}>
@@ -357,7 +360,7 @@ export default function Reports() {
     setDraft((d) => ({
       ...d,
       campaigns: act.map((c) => withKeys({ ...c, open: act.length === 1 })),
-      hidden: ina,
+      hidden: ina.map((c) => ({ ...c, hid: uid() })), // id próprio: há conjuntos com o mesmo nome de campanha
       loadInfo: r.found ? { savedAt: r.savedAt, source: r.source } : { missing: true, others: r.others },
     }));
     setConfirmed(false); setImp(null); setBusy('');
@@ -377,7 +380,18 @@ export default function Reports() {
     listClients().then((l) => { const c = l.find((x) => x.id === id); if (c) selectClient(c); }).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  const includeHidden = (c) => patch({ campaigns: [...draft.campaigns, withKeys({ ...c, open: true })], hidden: draft.hidden.filter((x) => x !== c) });
+  // "+" tira a campanha da lista de sugestões e a coloca entre as campanhas do relatório; ao remover, ela volta para as sugestões
+  const includeHidden = (list) => {
+    const ids = new Set(list.map((c) => c.hid));
+    patch({ campaigns: [...draft.campaigns, ...list.map((c) => withKeys({ ...c, open: list.length === 1 }))], hidden: (draft.hidden || []).filter((x) => !ids.has(x.hid)) });
+  };
+  const removeCampaign = (c) => {
+    const { key, open, ...rest } = c;
+    patch({
+      campaigns: draft.campaigns.filter((x) => x.key !== c.key),
+      hidden: c.hid ? [...(draft.hidden || []), { ...rest, ads: rest.ads.map(({ key: _k, ...a }) => a) }] : draft.hidden,
+    });
+  };
   const persist = (campaigns, source) => draft.clientId && !isMeta && saveCampaigns(draft.clientId, draft.periodStart, draft.periodEnd, campaigns, source);
 
   const onFile = async (file) => {
@@ -466,7 +480,7 @@ export default function Reports() {
         )}
       </AnimatePresence>
 
-      <Card step="1" title="Cliente e período" sub="Selecione o cliente para carregar as campanhas ativas">
+      <Card step="1" title="Cliente e período" sub="Selecione o cliente para carregar as campanhas ativas" className="relative z-20">
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-[1.6fr_1fr_1fr_1.2fr]">
           <div className="md:col-span-2 xl:col-span-1"><Label>Cliente</Label><ClientMenu value={draft.clientId} onSelect={selectClient} /></div>
           <label><Label>Início</Label><input type="date" value={draft.periodStart} onChange={(e) => setPeriod('periodStart', e.target.value)} className={inputCls} /></label>
@@ -506,7 +520,7 @@ export default function Reports() {
       <Card
         step="2"
         title="Campanhas e anúncios"
-        sub={!draft.clientId ? 'Selecione um cliente no passo 1' : draft.campaigns.length ? `${draft.campaigns.length} campanha(s) ativa(s) · ${draft.campaigns.reduce((s, c) => s + c.ads.length, 0)} anúncios · gasto ${draft.currency === 'USD' ? 'US$' : 'R$'} ${nfmt(totalSpend)}` : 'Nenhuma campanha carregada'}
+        sub={!draft.clientId ? 'Selecione um cliente no passo 1' : draft.campaigns.length ? `${draft.campaigns.length} campanha(s) no relatório · ${draft.campaigns.reduce((s, c) => s + c.ads.length, 0)} anúncios · gasto ${draft.currency === 'USD' ? 'US$' : 'R$'} ${nfmt(totalSpend)}` : 'Nenhuma campanha carregada'}
         right={
           <div className="flex flex-wrap gap-2">
             <input ref={fileRef} type="file" accept=".csv,.xlsx,.tsv,.txt" hidden onChange={(e) => onFile(e.target.files?.[0])} />
@@ -544,9 +558,30 @@ export default function Reports() {
         )}
         {draft.hidden?.length > 0 && (
           <div className="mt-4 rounded-2xl border border-white/[0.07] bg-white/[0.02] p-4">
-            <p className="text-xs text-white/55">{draft.hidden.length} campanha(s) sem anúncios ativos no período — inclua se tiveram gasto:</p>
-            <div className="mt-2 flex flex-wrap gap-2">
-              {draft.hidden.map((c) => <button key={c.name + c.adset} onClick={() => includeHidden(c)} className="chip"><Plus className="h-3.5 w-3.5" /> {c.name} · {c.ads.length} anúncios</button>)}
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-xs text-white/55">{draft.hidden.length} campanha(s) sem anúncios ativos agora — clique em + para incluir no relatório:</p>
+              {draft.hidden.length > 1 && <button onClick={() => includeHidden(draft.hidden)} className="chip"><Plus className="h-3.5 w-3.5" /> Incluir todas</button>}
+            </div>
+            <div className="mt-3 grid gap-2 sm:grid-cols-2">
+              <AnimatePresence initial={false}>
+                {draft.hidden.map((c, i) => {
+                  const spend = c.ads.reduce((t, a) => t + (a.spend ?? 0), 0);
+                  return (
+                    <motion.button
+                      layout key={c.hid || `${c.name}|${c.adset}|${i}`}
+                      initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }}
+                      onClick={() => includeHidden([c])}
+                      className="group flex items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.03] px-3 py-2.5 text-left transition hover:border-brand/50 hover:bg-brand/10"
+                    >
+                      <span className="grid h-7 w-7 shrink-0 place-items-center rounded-full border border-white/15 text-brand-300 transition group-hover:border-brand/60"><Plus className="h-3.5 w-3.5" /></span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-xs font-semibold text-white/85">{c.name}</span>
+                        <span className="block truncate text-[11px] text-white/45">{c.adset || 'sem conjunto'} · {c.ads.length} anúncio(s) · {draft.currency === 'USD' ? 'US$' : 'R$'} {nfmt(spend)}</span>
+                      </span>
+                    </motion.button>
+                  );
+                })}
+              </AnimatePresence>
             </div>
           </div>
         )}
@@ -555,7 +590,7 @@ export default function Reports() {
 
         <div className="mt-5 space-y-3">
           {draft.campaigns.map((c, i) => (
-            <CampaignEditor key={c.key} c={c} idx={i} currency={draft.currency} update={(nc) => updateCampaign(c.key, nc)} remove={() => patch({ campaigns: draft.campaigns.filter((x) => x.key !== c.key) })} />
+            <CampaignEditor key={c.key} c={c} idx={i} currency={draft.currency} update={(nc) => updateCampaign(c.key, nc)} remove={() => removeCampaign(c)} />
           ))}
           {draft.clientId && !draft.campaigns.length && !imp && busy !== 'load' && (
             <button onClick={() => fileRef.current?.click()} onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); onFile(e.dataTransfer.files?.[0]); }} className="grid w-full place-items-center gap-2 rounded-2xl border border-dashed border-white/15 py-12 text-sm text-white/50 transition hover:border-brand/50 hover:text-white">
