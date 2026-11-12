@@ -239,7 +239,7 @@ function Preview({ html, fileName, onClose }) {
         <Button onClick={print} icon={Printer}>Salvar PDF</Button>
         <button onClick={onClose} className="rounded-full border border-white/10 p-2.5 text-white/70 transition hover:text-white" aria-label="Fechar prévia"><X className="h-4 w-4" /></button>
       </div>
-      <p className="border-b border-white/5 px-6 py-2 text-xs text-white/45">Na janela de impressão, escolha <b className="text-white/70">Salvar como PDF</b>. O papel A4 paisagem e as cores já vêm configurados.</p>
+      <p className="border-b border-white/5 px-6 py-2 text-xs text-white/45">Na janela de impressão, escolha <b className="text-white/70">Salvar como PDF</b>. O tamanho do papel e as cores já vêm configurados.</p>
       <iframe ref={ref} title="Prévia do relatório" srcDoc={html} className="w-full flex-1 bg-[#2A2D33]" />
     </motion.div>,
     document.body,
@@ -482,7 +482,6 @@ export default function Reports() {
         onClose={() => setActiveOpen(false)}
         onPreview={({ html, fileName }) => setPreview({ html, fileName })}
         getLogo={logoDataUrl}
-        defaults={{ periodStart: draft.periodStart, periodEnd: draft.periodEnd, rate: draft.rate, rateSource: draft.rateSource }}
       />
 
       <AnimatePresence>

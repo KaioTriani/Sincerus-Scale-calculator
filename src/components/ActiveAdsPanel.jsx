@@ -1,12 +1,11 @@
 // Painel "Anúncios ativos": todos os anúncios veiculando agora, de todos os clientes (API da Meta).
-// Agrupado por cliente → campanha → conjunto → anúncios, com busca, atualização e exportação CSV.
+// Agrupado por cliente → campanha → conjunto → anúncios, com busca, seleção de clientes, PDF, texto para WhatsApp e CSV.
 import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { AnimatePresence, motion } from 'motion/react';
-import { X, Search, RotateCcw, Download, ChevronDown, Megaphone, AlertTriangle, Loader2, FileText, Layers, Check, Landmark } from 'lucide-react';
+import { X, Search, RotateCcw, Download, ChevronDown, Megaphone, AlertTriangle, Loader2, FileText, Layers, Check, MessageCircle } from 'lucide-react';
 import { api } from '../lib/api';
-import { fetchPtax } from '../lib/report/build';
-import { buildActiveAdsReport } from '../lib/report/activeAdsHtml';
+import { buildActiveAdsHtml, activeAdsText } from '../lib/report/activeAdsHtml';
 
 const norm = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
 const fmtDateTime = (iso) => new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
@@ -48,21 +47,24 @@ function Box({ checked, partial, onChange, label }) {
   );
 }
 
-function ClientBlock({ a, open, toggle, onReport, selected, onSelect, busy }) {
+function ClientBlock({ a, open, toggle, onPdf, onCopy, selected, onSelect }) {
   const ads = countAds(a);
   return (
-    <div className="rounded-2xl border border-white/[0.08] bg-white/[0.02]">
-      <div className="flex flex-wrap items-center gap-3 px-4 py-3">
+    <div className={`overflow-hidden rounded-2xl border bg-white/[0.02] transition ${selected ? 'border-brand/50' : 'border-white/[0.08]'}`}>
+      <div className="flex flex-wrap items-center gap-3 border-l-4 border-brand bg-white/[0.03] px-4 py-3.5">
         <Box checked={selected} onChange={onSelect} label={`Selecionar ${a.name}`} />
         <button onClick={toggle} className="flex min-w-0 flex-1 items-center gap-3 text-left">
-          <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-linear-to-br from-brand-400 to-brand-700 text-xs font-bold">{a.name.split(' ').slice(0, 2).map((w) => w[0]).join('').toUpperCase()}</span>
+          <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-linear-to-br from-brand-400 to-brand-700 text-sm font-bold">{a.name.split(' ').slice(0, 2).map((w) => w[0]).join('').toUpperCase()}</span>
           <span className="min-w-0 flex-1">
-            <span className="block truncate font-semibold">{a.name}</span>
-            <span className="block truncate text-[11px] text-white/45">{a.campaigns.length} campanha(s) · {ads} anúncio(s) ativo(s) · conta {a.id.replace('act_', '')}{a.business ? ` · ${a.business}` : ''}</span>
+            <span className="block truncate text-lg font-bold leading-tight text-white">{a.name}</span>
+            <span className="mt-0.5 block truncate text-xs text-white/50"><b className="font-semibold text-emerald-300">{ads} anúncio(s) no ar</b> · {a.campaigns.length} campanha(s) · conta {a.id.replace('act_', '')}</span>
           </span>
           <ChevronDown className={`h-4 w-4 shrink-0 text-white/50 transition ${open ? 'rotate-180' : ''}`} />
         </button>
-        <button onClick={() => onReport([a])} disabled={busy} className="chip disabled:opacity-50"><FileText className="h-3.5 w-3.5" /> Gerar relatório</button>
+        <div className="flex gap-1.5">
+          <button onClick={() => onCopy([a])} className="chip" title="Copiar a lista no formato do WhatsApp"><MessageCircle className="h-3.5 w-3.5 text-emerald-300" /> WhatsApp</button>
+          <button onClick={() => onPdf([a])} className="chip"><FileText className="h-3.5 w-3.5 text-brand-300" /> PDF</button>
+        </div>
       </div>
       <AnimatePresence initial={false}>
         {open && (
@@ -95,17 +97,13 @@ function ClientBlock({ a, open, toggle, onReport, selected, onSelect, busy }) {
   );
 }
 
-export default function ActiveAdsPanel({ open, onClose, onPreview, getLogo, defaults }) {
+export default function ActiveAdsPanel({ open, onClose, onPreview, getLogo }) {
   const [data, setData] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [q, setQ] = useState('');
   const [expanded, setExpanded] = useState({});
   const [selected, setSelected] = useState(() => new Set());
-  const [period, setPeriod] = useState(() => [defaults?.periodStart || '', defaults?.periodEnd || '']);
-  const [rate, setRate] = useState(defaults?.rate || '');
-  const [rateSource, setRateSource] = useState(defaults?.rateSource || '');
-  const [gen, setGen] = useState(null); // progresso da geração
   const [notice, setNotice] = useState('');
 
   const load = async (refresh) => {
@@ -139,28 +137,29 @@ export default function ActiveAdsPanel({ open, onClose, onPreview, getLogo, defa
   const toggleSel = (id) => setSelected((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   const toggleAll = () => setSelected(allSel ? new Set() : new Set(shown.map((a) => a.id)));
 
-  // Gera o PDF de anúncios ativos (mesmo layout das tabelas do relatório de desempenho) para os clientes escolhidos
-  const generate = async (list) => {
+  // clientes marcados, com a lista completa de anúncios (a busca só filtra a tela)
+  const selectedClients = () => withAds.filter((a) => selected.has(a.id));
+  const when = () => (data ? new Date(data.fetchedAt) : new Date());
+
+  // PDF no formato de lista para o cliente (uma página por cliente)
+  const makePdf = async (list) => {
     if (!list.length) return;
     setError(''); setNotice('');
-    const [ps, pe] = period;
-    if (!ps || !pe || pe < ps) { setError('Escolha o período dos números (início e fim).'); return; }
-    let r = rate, src = rateSource;
-    try {
-      if (!(parseFloat(String(r).replace(',', '.')) > 0)) {
-        setGen({ i: 0, n: list.length, name: 'cotação PTAX' });
-        let p;
-        try { p = await fetchPtax(ps, pe); } catch { // período sem PTAX (ex.: hoje ou fim de semana): usa os 7 dias anteriores
-          const d = new Date(pe + 'T12:00:00'); d.setDate(d.getDate() - 7);
-          p = await fetchPtax(d.toISOString().slice(0, 10), pe);
-        }
-        r = String(p.rate).replace('.', ','); src = p.source; setRate(r); setRateSource(src);
-      }
-      const out = await buildActiveAdsReport(list, { periodStart: ps, periodEnd: pe, rate: r, rateSource: src }, await getLogo(), (i, n, name) => setGen({ i, n, name }));
-      if (out.empty) { setError('Nenhuma campanha ativa com dados nesse período para os clientes escolhidos.'); return; }
-      if (out.skipped.length) setNotice(`Sem campanha ativa com dados no período: ${out.skipped.join(', ')}.`);
-      onPreview(out);
-    } catch (e) { setError(e.message || 'Falha ao gerar o relatório.'); } finally { setGen(null); }
+    try { onPreview(buildActiveAdsHtml(list, await getLogo(), { when: when() })); }
+    catch (e) { setError(e.message || 'Falha ao gerar o PDF.'); }
+  };
+  // Texto no formato do WhatsApp ("Anúncios Ativos - Cliente - data" + ✅ por anúncio)
+  const copyText = async (list) => {
+    if (!list.length) return;
+    setError('');
+    const text = activeAdsText(list, when());
+    try { await navigator.clipboard.writeText(text); }
+    catch { // navegador sem permissão de área de transferência: cópia pelo método antigo
+      const t = Object.assign(document.createElement('textarea'), { value: text });
+      document.body.appendChild(t); t.select(); document.execCommand('copy'); t.remove();
+    }
+    setNotice(`Texto de ${list.length === 1 ? list[0].name : `${list.length} clientes`} copiado. É só colar no WhatsApp.`);
+    setTimeout(() => setNotice(''), 4000);
   };
 
   return createPortal(
@@ -192,19 +191,18 @@ export default function ActiveAdsPanel({ open, onClose, onPreview, getLogo, defa
                 <button onClick={() => data && downloadCsv(shown, data.fetchedAt)} disabled={!data || !totals.ads} className="chip disabled:opacity-50"><Download className="h-3.5 w-3.5" /> Baixar CSV</button>
                 <button onClick={() => setExpanded(Object.fromEntries(shown.map((a) => [a.id, !allOpen])))} disabled={!shown.length} className="chip disabled:opacity-50">{allOpen ? 'Recolher todos' : 'Expandir todos'}</button>
               </div>
-              <div className="mt-3 grid gap-2 rounded-2xl border border-white/[0.07] bg-white/[0.02] p-3 sm:grid-cols-3">
-                <label className="text-[11px] text-white/45">Números de<input type="date" value={period[0]} onChange={(e) => setPeriod([e.target.value, period[1]])} className="mt-1 w-full rounded-lg border border-white/10 bg-white/[0.04] px-2 py-1.5 text-sm text-white outline-none focus:border-brand/50" /></label>
-                <label className="text-[11px] text-white/45">até<input type="date" value={period[1]} onChange={(e) => setPeriod([period[0], e.target.value])} className="mt-1 w-full rounded-lg border border-white/10 bg-white/[0.04] px-2 py-1.5 text-sm text-white outline-none focus:border-brand/50" /></label>
-                <label className="text-[11px] text-white/45"><span className="flex items-center gap-1"><Landmark className="h-3 w-3" /> Cotação USD→BRL</span><input value={rate} onChange={(e) => { setRate(e.target.value); setRateSource('Cotação informada pelo usuário.'); }} placeholder="vazio = PTAX automática" className="mt-1 w-full rounded-lg border border-white/10 bg-white/[0.04] px-2 py-1.5 text-sm text-white outline-none placeholder:text-white/30 focus:border-brand/50" /></label>
-              </div>
-              <div className="mt-3 flex flex-wrap items-center gap-3">
+              <div className="mt-3 flex flex-wrap items-center gap-3 rounded-2xl border border-white/[0.07] bg-white/[0.02] p-3">
                 <div className="flex items-center gap-2 text-sm text-white/80"><Box checked={allSel} partial={nSel > 0 && !allSel} onChange={toggleAll} label="Selecionar todos" /><button type="button" onClick={toggleAll}>Selecionar todos</button></div>
-                <span className="text-xs text-white/45">{nSel} de {shown.length} cliente(s) selecionado(s)</span>
-                <button onClick={() => generate(shown.filter((a) => selected.has(a.id)))} disabled={!nSel || !!gen} className="ml-auto inline-flex items-center gap-2 rounded-xl bg-brand px-4 py-2 text-sm font-semibold text-black transition hover:brightness-110 disabled:opacity-40">
-                  {gen ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />} Gerar relatório{nSel ? ` (${nSel})` : ''}
-                </button>
+                <span className="text-xs text-white/45">{nSel} de {shown.length} selecionado(s)</span>
+                <div className="ml-auto flex flex-wrap gap-2">
+                  <button onClick={() => copyText(selectedClients())} disabled={!nSel} className="inline-flex items-center gap-2 rounded-xl border border-emerald-400/40 bg-emerald-400/10 px-3.5 py-2 text-sm font-semibold text-emerald-200 transition hover:bg-emerald-400/20 disabled:opacity-40">
+                    <MessageCircle className="h-4 w-4" /> Copiar para WhatsApp{nSel ? ` (${nSel})` : ''}
+                  </button>
+                  <button onClick={() => makePdf(selectedClients())} disabled={!nSel} className="inline-flex items-center gap-2 rounded-xl bg-brand px-3.5 py-2 text-sm font-semibold text-black transition hover:brightness-110 disabled:opacity-40">
+                    <FileText className="h-4 w-4" /> Gerar PDF{nSel ? ` (${nSel})` : ''}
+                  </button>
+                </div>
               </div>
-              {gen && <p className="mt-2 text-xs text-white/55">Montando o relatório{gen.n > 1 ? ` · ${gen.i} de ${gen.n} clientes carregados` : ''}…</p>}
             </header>
 
             <div className="scrollbar-thin flex-1 space-y-3 overflow-y-auto p-5">
@@ -213,7 +211,7 @@ export default function ActiveAdsPanel({ open, onClose, onPreview, getLogo, defa
               {busy && !data && <p className="flex items-center gap-2 text-sm text-white/55"><Loader2 className="h-4 w-4 animate-spin" /> Consultando todas as contas na Meta. Com muitas contas, pode levar alguns segundos…</p>}
               {data && !shown.length && <p className="text-sm text-white/50">{q ? 'Nada encontrado para essa busca.' : 'Nenhum anúncio ativo agora.'}</p>}
               {shown.map((a) => (
-                <ClientBlock key={a.id} a={a} open={!!expanded[a.id] || !!q} toggle={() => setExpanded((x) => ({ ...x, [a.id]: !x[a.id] }))} onReport={generate} busy={!!gen} selected={selected.has(a.id)} onSelect={() => toggleSel(a.id)} />
+                <ClientBlock key={a.id} a={a} open={!!expanded[a.id] || !!q} toggle={() => setExpanded((x) => ({ ...x, [a.id]: !x[a.id] }))} onPdf={makePdf} onCopy={copyText} selected={selected.has(a.id)} onSelect={() => toggleSel(a.id)} />
               ))}
               {data && without.length > 0 && !q && (
                 <details className="rounded-2xl border border-white/[0.06] bg-white/[0.015] px-4 py-3 text-xs text-white/50">
