@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   FileUp, FileText, FileSpreadsheet, Plus, Trash2, ChevronDown, Landmark, AlertTriangle, CheckCircle2,
-  X, Printer, Loader2, RotateCcw, Info, Search, Check, Building2, CalendarClock,
+  X, Printer, Loader2, RotateCcw, Info, Search, Check, Building2, CalendarClock, Megaphone,
 } from 'lucide-react';
 import Reveal from '../components/Reveal';
 import Button from '../components/Button';
@@ -11,6 +11,8 @@ import { readTable, tableToCampaigns, parseNumber, identifyCar } from '../lib/re
 import { compute, isActive, carro } from '../lib/report/compute';
 import { draftToReport, fetchPtax, shortResult } from '../lib/report/build';
 import { listClients, addClient, loadClientCampaigns, saveCampaigns, setClientCurrency } from '../lib/report/library';
+import { metaAvailable } from '../lib/api';
+import ActiveAdsPanel from '../components/ActiveAdsPanel';
 
 const DRAFT_KEY = 'sincerus.report.draft.v2';
 const uid = () => Math.random().toString(36).slice(2, 9);
@@ -342,6 +344,9 @@ export default function Reports() {
   const [preview, setPreview] = useState(null);
   const fileRef = useRef(null);
   const lastRows = useRef(null);
+  const [activeOpen, setActiveOpen] = useState(false);
+  const [metaOn, setMetaOn] = useState(false);
+  useEffect(() => { metaAvailable().then((s) => setMetaOn(!!s.configured)).catch(() => setMetaOn(false)); }, []);
 
   useEffect(() => { try { localStorage.setItem(DRAFT_KEY, JSON.stringify(draft)); } catch { /* sem armazenamento */ } }, [draft]);
   const patch = (p) => { setDraft((d) => ({ ...d, ...p })); setConfirmed(false); };
@@ -467,10 +472,16 @@ export default function Reports() {
           <h1 className="mt-1 text-3xl font-bold sm:text-4xl">Relatórios</h1>
           <p className="mt-2 max-w-2xl text-sm text-white/50">Escolha o cliente: as campanhas ativas do período aparecem com todos os anúncios. Confira e gere o PDF Sincerus e a planilha — sempre com gasto em dólar e em real.</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
+          {metaOn && <Button onClick={() => setActiveOpen(true)} icon={Megaphone}>Anúncios ativos (todos os clientes)</Button>}
           <button onClick={() => { if (confirm('Limpar o rascunho atual?')) { setDraft(EMPTY()); setConfirmed(false); } }} className="chip"><RotateCcw className="h-3.5 w-3.5" /> Novo</button>
         </div>
       </Reveal>
+      <ActiveAdsPanel
+        open={activeOpen}
+        onClose={() => setActiveOpen(false)}
+        onReport={(a) => { setActiveOpen(false); selectClient({ id: a.id, name: a.name, currency: a.currency }); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
+      />
 
       <AnimatePresence>
         {error && (

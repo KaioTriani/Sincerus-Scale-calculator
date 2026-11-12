@@ -38,6 +38,7 @@ async function api(req, res, url) {
     if (route === 'GET /api/meta/status') return send(200, { configured: meta.configured(), version: process.env.META_API_VERSION || 'v23.0' });
     if (route === 'GET /api/meta/accounts') return send(200, await meta.accounts(refresh));
     if (route === 'GET /api/meta/report') return send(200, await meta.report(q('account'), q('since'), q('until'), refresh));
+    if (route === 'GET /api/meta/active-ads') return send(200, await meta.activeAds(refresh));
     if (route === 'GET /api/meta/overview') return send(200, await meta.overview(q('since'), q('until'), refresh));
     return send(404, { error: 'Rota não encontrada.' });
   } catch (e) {

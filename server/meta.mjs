@@ -149,12 +149,51 @@ export function report(account, since, until, refresh) {
   }, refresh);
 }
 
+// Roda fn em cada item com no máximo `n` chamadas simultâneas (evita estourar o limite da Meta com muitas contas)
+async function pool(items, n, fn) {
+  const out = new Array(items.length);
+  let i = 0;
+  await Promise.all(Array.from({ length: Math.min(n, items.length) }, async () => {
+    while (i < items.length) { const k = i++; out[k] = await fn(items[k]); }
+  }));
+  return out;
+}
+
+// Todos os anúncios ativos agora, de todas as contas: cliente → campanha → conjunto → anúncios
+export function activeAds(refresh) {
+  return cached('active-ads', async () => {
+    const accs = (await accounts(refresh)).filter((a) => a.statusCode !== 2 && a.statusCode !== 101);
+    const rows = await pool(accs, 5, async (a) => {
+      try {
+        const ads = await graph(`${a.id}/ads`, {
+          effective_status: JSON.stringify(['ACTIVE']),
+          fields: 'id,name,created_time,campaign{id,name,objective,effective_status},adset{id,name,effective_status}',
+          limit: '500',
+        });
+        const camps = new Map();
+        for (const ad of ads) {
+          const c = ad.campaign || {};
+          if (!camps.has(c.id)) camps.set(c.id, { id: c.id, name: c.name || '(campanha)', objective: c.objective || '', status: STATUS[c.effective_status] || c.effective_status || '', adsets: new Map() });
+          const camp = camps.get(c.id);
+          const s = ad.adset || {};
+          if (!camp.adsets.has(s.id)) camp.adsets.set(s.id, { id: s.id, name: s.name || '(conjunto)', ads: [] });
+          camp.adsets.get(s.id).ads.push({ id: ad.id, name: ad.name, created: ad.created_time?.slice(0, 10) || '' });
+        }
+        const campaigns = [...camps.values()].map((c) => ({ ...c, adsets: [...c.adsets.values()].map((s) => ({ ...s, ads: s.ads.sort((x, y) => x.name.localeCompare(y.name, 'pt-BR')) })) }))
+          .sort((x, y) => x.name.localeCompare(y.name, 'pt-BR'));
+        return { id: a.id, name: a.name, currency: a.currency, status: a.status, business: a.business, campaigns, ads: ads.length };
+      } catch (e) { return { id: a.id, name: a.name, currency: a.currency, status: a.status, business: a.business, campaigns: [], ads: 0, error: e.message }; }
+    });
+    return { fetchedAt: new Date().toISOString(), accounts: rows };
+  }, refresh);
+}
+
 // Visão geral para o dashboard: gasto e impressões mensais de cada conta
 export function overview(since, until, refresh) {
   return cached(`overview:${since}:${until}`, async () => {
     const accs = await accounts(refresh);
     const time_range = JSON.stringify({ since, until });
-    const rows = await Promise.all(accs.map(async (a) => {
+    const rows = await pool(accs, 5, async (a) => {
       // conta desativada ou fechada: aparece na carteira, sem consulta de insights (pendente de pagamento ainda tem histórico)
       if (a.statusCode === 2 || a.statusCode === 101) return { ...a, months: [] };
       try {
@@ -166,7 +205,7 @@ export function overview(since, until, refresh) {
         }));
         return { ...a, months };
       } catch (e) { return { ...a, months: [], error: e.message }; }
-    }));
+    });
     return { since, until, fetchedAt: new Date().toISOString(), accounts: rows };
   }, refresh);
 }
