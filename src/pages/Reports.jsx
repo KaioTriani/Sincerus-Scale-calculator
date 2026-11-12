@@ -480,7 +480,9 @@ export default function Reports() {
       <ActiveAdsPanel
         open={activeOpen}
         onClose={() => setActiveOpen(false)}
-        onReport={(a) => { setActiveOpen(false); selectClient({ id: a.id, name: a.name, currency: a.currency }); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
+        onPreview={({ html, fileName }) => setPreview({ html, fileName })}
+        getLogo={logoDataUrl}
+        defaults={{ periodStart: draft.periodStart, periodEnd: draft.periodEnd, rate: draft.rate, rateSource: draft.rateSource }}
       />
 
       <AnimatePresence>

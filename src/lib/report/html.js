@@ -64,7 +64,10 @@ function stacked({ title, rows, w = 560, valueW = 80, axisFmt = kAxis, labelFmt 
   return s + '</svg>';
 }
 
-export function buildReportHtml(report, { F, camps, all, tot, cmp, checks }, logoDataUrl) {
+// opts.tablesOnly: só as páginas de tabela de anúncios de cada campanha (relatório de anúncios ativos)
+// opts.pagesOnly: devolve a lista de páginas em vez do documento (para juntar vários clientes)
+export function buildReportHtml(report, { F, camps, all, tot, cmp, checks }, logoDataUrl, opts = {}) {
+  const { tablesOnly = false, pagesOnly = false } = opts;
   const conv = F.conv;
   const rateTxt = F.dec(F.rate, 4);
   const footer = conv ? `Fonte: dados do Gerenciador de Anúncios · Cotação USD→BRL ${rateTxt}` : 'Fonte: dados do Gerenciador de Anúncios';
@@ -100,7 +103,7 @@ export function buildReportHtml(report, { F, camps, all, tot, cmp, checks }, log
 
   const pages = [];
   // ---------- capa ----------
-  pages.push(page(`
+  if (!tablesOnly) pages.push(page(`
     <div class="logo"><img src="${logoDataUrl}"></div>
     <h1 class="big">RELATÓRIO DE DESEMPENHO</h1>
     <h2 class="kicker">TRÁFEGO PAGO • META ADS • ${esc(report.client.toUpperCase())} • ${esc(report.periodLong.toUpperCase())}</h2>
@@ -128,7 +131,7 @@ export function buildReportHtml(report, { F, camps, all, tot, cmp, checks }, log
   // ---------- campanhas ----------
   for (const c of camps) {
     const resL = c.resultShort ? c.resultShort[0].toUpperCase() + c.resultShort.slice(1) : 'Resultados';
-    pages.push(page(`<h1>${c.num} / ${esc((c.label || c.name).toUpperCase())}</h1>
+    if (!tablesOnly) pages.push(page(`<h1>${c.num} / ${esc((c.label || c.name).toUpperCase())}</h1>
       <p class="lead">Campanha <b>${esc(c.name)}</b> · Conjunto <b>${esc(c.adset || '—')}</b> · Período ${esc(report.periodLabel)}${conv ? ` · Cotação ${rateTxt}` : ''} · Gerado em ${esc(report.generatedAt)}<br>Resultado: ${esc(c.resultType || 'n/d')}${c.attribution ? ` · Atribuição: ${esc(c.attribution)}` : ''}${c.budget ? ` · Orçamento: ${esc(c.budget)}` : ''}</p>
       ${kpis([
         ['Investimento', F.money(c.spend), conv ? F.brl(c.brl) : ''],
@@ -179,6 +182,7 @@ export function buildReportHtml(report, { F, camps, all, tot, cmp, checks }, log
     });
     function findGroup(list, it) { const idx = list.indexOf(it); for (let i = idx; i >= 0; i--) if (list[i].t === 'h') return list[i].label; return ''; }
 
+    if (tablesOnly) continue;
     if (c.hasRank) {
       const rk = c.ads.filter((a) => a.q || a.e || a.cv);
       for (let i = 0; i < rk.length; i += 24) {
@@ -198,6 +202,9 @@ export function buildReportHtml(report, { F, camps, all, tot, cmp, checks }, log
     pages.push(page(`<h2 class="sec">${c.num} / GRÁFICOS</h2>${legend}<div class="chart">${gasto}</div><div class="cols2 charts"><div class="chart">${imp}</div><div class="chart">${alc}</div></div>`));
     pages.push(page(`<h2 class="sec">${c.num} / ALERTAS E OBSERVAÇÕES</h2>${c.alertas}`));
   }
+
+  if (pagesOnly) return pages;
+  if (tablesOnly) return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>${esc(report.fileName)}</title><style>${css}</style></head><body>${pages.join('\n')}</body></html>`;
 
   // ---------- consolidado ----------
   if (camps.length > 1) {
@@ -233,3 +240,4 @@ export function buildReportHtml(report, { F, camps, all, tot, cmp, checks }, log
 
   return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>${esc(report.fileName)}</title><style>${css}</style></head><body>${pages.join('\n')}</body></html>`;
 }
+export { css as reportCss };

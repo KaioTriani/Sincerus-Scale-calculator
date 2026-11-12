@@ -3,8 +3,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { AnimatePresence, motion } from 'motion/react';
-import { X, Search, RotateCcw, Download, ChevronDown, Megaphone, AlertTriangle, Loader2, FileText, Layers } from 'lucide-react';
+import { X, Search, RotateCcw, Download, ChevronDown, Megaphone, AlertTriangle, Loader2, FileText, Layers, Check, Landmark } from 'lucide-react';
 import { api } from '../lib/api';
+import { fetchPtax } from '../lib/report/build';
+import { buildActiveAdsReport } from '../lib/report/activeAdsHtml';
 
 const norm = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
 const fmtDateTime = (iso) => new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
@@ -37,11 +39,21 @@ function downloadCsv(accounts, fetchedAt) {
   link.click(); setTimeout(() => URL.revokeObjectURL(link.href), 2000);
 }
 
-function ClientBlock({ a, open, toggle, onReport }) {
+function Box({ checked, partial, onChange, label }) {
+  return (
+    <button type="button" role="checkbox" aria-checked={partial ? 'mixed' : checked} aria-label={label} onClick={onChange}
+      className={`grid h-5 w-5 shrink-0 place-items-center rounded-md border transition ${checked || partial ? 'border-brand bg-brand text-black' : 'border-white/25 hover:border-white/50'}`}>
+      {checked ? <Check className="h-3.5 w-3.5" strokeWidth={3} /> : partial ? <span className="h-0.5 w-2.5 rounded bg-black" /> : null}
+    </button>
+  );
+}
+
+function ClientBlock({ a, open, toggle, onReport, selected, onSelect, busy }) {
   const ads = countAds(a);
   return (
     <div className="rounded-2xl border border-white/[0.08] bg-white/[0.02]">
       <div className="flex flex-wrap items-center gap-3 px-4 py-3">
+        <Box checked={selected} onChange={onSelect} label={`Selecionar ${a.name}`} />
         <button onClick={toggle} className="flex min-w-0 flex-1 items-center gap-3 text-left">
           <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-linear-to-br from-brand-400 to-brand-700 text-xs font-bold">{a.name.split(' ').slice(0, 2).map((w) => w[0]).join('').toUpperCase()}</span>
           <span className="min-w-0 flex-1">
@@ -50,7 +62,7 @@ function ClientBlock({ a, open, toggle, onReport }) {
           </span>
           <ChevronDown className={`h-4 w-4 shrink-0 text-white/50 transition ${open ? 'rotate-180' : ''}`} />
         </button>
-        <button onClick={() => onReport(a)} className="chip"><FileText className="h-3.5 w-3.5" /> Gerar relatório</button>
+        <button onClick={() => onReport([a])} disabled={busy} className="chip disabled:opacity-50"><FileText className="h-3.5 w-3.5" /> Gerar relatório</button>
       </div>
       <AnimatePresence initial={false}>
         {open && (
@@ -83,12 +95,18 @@ function ClientBlock({ a, open, toggle, onReport }) {
   );
 }
 
-export default function ActiveAdsPanel({ open, onClose, onReport }) {
+export default function ActiveAdsPanel({ open, onClose, onPreview, getLogo, defaults }) {
   const [data, setData] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [q, setQ] = useState('');
   const [expanded, setExpanded] = useState({});
+  const [selected, setSelected] = useState(() => new Set());
+  const [period, setPeriod] = useState(() => [defaults?.periodStart || '', defaults?.periodEnd || '']);
+  const [rate, setRate] = useState(defaults?.rate || '');
+  const [rateSource, setRateSource] = useState(defaults?.rateSource || '');
+  const [gen, setGen] = useState(null); // progresso da geração
+  const [notice, setNotice] = useState('');
 
   const load = async (refresh) => {
     setBusy(true); setError('');
@@ -101,7 +119,8 @@ export default function ActiveAdsPanel({ open, onClose, onReport }) {
   useEffect(() => { if (open && !data && !busy) load(false); }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!open) return undefined;
-    const h = (e) => e.key === 'Escape' && onClose();
+    // com a prévia do PDF aberta, o Esc fecha só a prévia
+    const h = (e) => e.key === 'Escape' && !document.querySelector('iframe[title="Prévia do relatório"]') && onClose();
     window.addEventListener('keydown', h);
     return () => window.removeEventListener('keydown', h);
   }, [open, onClose]);
@@ -115,6 +134,34 @@ export default function ActiveAdsPanel({ open, onClose, onReport }) {
     ads: shown.reduce((t, a) => t + countAds(a), 0),
   }), [shown]);
   const allOpen = shown.length > 0 && shown.every((a) => expanded[a.id]);
+  const nSel = shown.filter((a) => selected.has(a.id)).length;
+  const allSel = shown.length > 0 && nSel === shown.length;
+  const toggleSel = (id) => setSelected((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  const toggleAll = () => setSelected(allSel ? new Set() : new Set(shown.map((a) => a.id)));
+
+  // Gera o PDF de anúncios ativos (mesmo layout das tabelas do relatório de desempenho) para os clientes escolhidos
+  const generate = async (list) => {
+    if (!list.length) return;
+    setError(''); setNotice('');
+    const [ps, pe] = period;
+    if (!ps || !pe || pe < ps) { setError('Escolha o período dos números (início e fim).'); return; }
+    let r = rate, src = rateSource;
+    try {
+      if (!(parseFloat(String(r).replace(',', '.')) > 0)) {
+        setGen({ i: 0, n: list.length, name: 'cotação PTAX' });
+        let p;
+        try { p = await fetchPtax(ps, pe); } catch { // período sem PTAX (ex.: hoje ou fim de semana): usa os 7 dias anteriores
+          const d = new Date(pe + 'T12:00:00'); d.setDate(d.getDate() - 7);
+          p = await fetchPtax(d.toISOString().slice(0, 10), pe);
+        }
+        r = String(p.rate).replace('.', ','); src = p.source; setRate(r); setRateSource(src);
+      }
+      const out = await buildActiveAdsReport(list, { periodStart: ps, periodEnd: pe, rate: r, rateSource: src }, await getLogo(), (i, n, name) => setGen({ i, n, name }));
+      if (out.empty) { setError('Nenhuma campanha ativa com dados nesse período para os clientes escolhidos.'); return; }
+      if (out.skipped.length) setNotice(`Sem campanha ativa com dados no período: ${out.skipped.join(', ')}.`);
+      onPreview(out);
+    } catch (e) { setError(e.message || 'Falha ao gerar o relatório.'); } finally { setGen(null); }
+  };
 
   return createPortal(
     <AnimatePresence>
@@ -145,14 +192,28 @@ export default function ActiveAdsPanel({ open, onClose, onReport }) {
                 <button onClick={() => data && downloadCsv(shown, data.fetchedAt)} disabled={!data || !totals.ads} className="chip disabled:opacity-50"><Download className="h-3.5 w-3.5" /> Baixar CSV</button>
                 <button onClick={() => setExpanded(Object.fromEntries(shown.map((a) => [a.id, !allOpen])))} disabled={!shown.length} className="chip disabled:opacity-50">{allOpen ? 'Recolher todos' : 'Expandir todos'}</button>
               </div>
+              <div className="mt-3 grid gap-2 rounded-2xl border border-white/[0.07] bg-white/[0.02] p-3 sm:grid-cols-3">
+                <label className="text-[11px] text-white/45">Números de<input type="date" value={period[0]} onChange={(e) => setPeriod([e.target.value, period[1]])} className="mt-1 w-full rounded-lg border border-white/10 bg-white/[0.04] px-2 py-1.5 text-sm text-white outline-none focus:border-brand/50" /></label>
+                <label className="text-[11px] text-white/45">até<input type="date" value={period[1]} onChange={(e) => setPeriod([period[0], e.target.value])} className="mt-1 w-full rounded-lg border border-white/10 bg-white/[0.04] px-2 py-1.5 text-sm text-white outline-none focus:border-brand/50" /></label>
+                <label className="text-[11px] text-white/45"><span className="flex items-center gap-1"><Landmark className="h-3 w-3" /> Cotação USD→BRL</span><input value={rate} onChange={(e) => { setRate(e.target.value); setRateSource('Cotação informada pelo usuário.'); }} placeholder="vazio = PTAX automática" className="mt-1 w-full rounded-lg border border-white/10 bg-white/[0.04] px-2 py-1.5 text-sm text-white outline-none placeholder:text-white/30 focus:border-brand/50" /></label>
+              </div>
+              <div className="mt-3 flex flex-wrap items-center gap-3">
+                <div className="flex items-center gap-2 text-sm text-white/80"><Box checked={allSel} partial={nSel > 0 && !allSel} onChange={toggleAll} label="Selecionar todos" /><button type="button" onClick={toggleAll}>Selecionar todos</button></div>
+                <span className="text-xs text-white/45">{nSel} de {shown.length} cliente(s) selecionado(s)</span>
+                <button onClick={() => generate(shown.filter((a) => selected.has(a.id)))} disabled={!nSel || !!gen} className="ml-auto inline-flex items-center gap-2 rounded-xl bg-brand px-4 py-2 text-sm font-semibold text-black transition hover:brightness-110 disabled:opacity-40">
+                  {gen ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />} Gerar relatório{nSel ? ` (${nSel})` : ''}
+                </button>
+              </div>
+              {gen && <p className="mt-2 text-xs text-white/55">Montando o relatório{gen.n > 1 ? ` · ${gen.i} de ${gen.n} clientes carregados` : ''}…</p>}
             </header>
 
             <div className="scrollbar-thin flex-1 space-y-3 overflow-y-auto p-5">
+              {notice && <p className="rounded-2xl border border-amber-300/25 bg-amber-300/[0.06] px-4 py-3 text-xs text-amber-100">{notice}</p>}
               {error && <p className="flex items-start gap-2 rounded-2xl border border-rose-400/30 bg-rose-400/10 px-4 py-3 text-sm text-rose-200"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />{error}</p>}
               {busy && !data && <p className="flex items-center gap-2 text-sm text-white/55"><Loader2 className="h-4 w-4 animate-spin" /> Consultando todas as contas na Meta. Com muitas contas, pode levar alguns segundos…</p>}
               {data && !shown.length && <p className="text-sm text-white/50">{q ? 'Nada encontrado para essa busca.' : 'Nenhum anúncio ativo agora.'}</p>}
               {shown.map((a) => (
-                <ClientBlock key={a.id} a={a} open={!!expanded[a.id] || !!q} toggle={() => setExpanded((x) => ({ ...x, [a.id]: !x[a.id] }))} onReport={onReport} />
+                <ClientBlock key={a.id} a={a} open={!!expanded[a.id] || !!q} toggle={() => setExpanded((x) => ({ ...x, [a.id]: !x[a.id] }))} onReport={generate} busy={!!gen} selected={selected.has(a.id)} onSelect={() => toggleSel(a.id)} />
               ))}
               {data && without.length > 0 && !q && (
                 <details className="rounded-2xl border border-white/[0.06] bg-white/[0.015] px-4 py-3 text-xs text-white/50">
