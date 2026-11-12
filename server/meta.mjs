@@ -163,7 +163,7 @@ async function pool(items, n, fn) {
 export function activeAds(refresh) {
   return cached('active-ads', async () => {
     const accs = (await accounts(refresh)).filter((a) => a.statusCode !== 2 && a.statusCode !== 101);
-    const rows = await pool(accs, 5, async (a) => {
+    const rows = await pool(accs, 10, async (a) => {
       try {
         const ads = await graph(`${a.id}/ads`, {
           effective_status: JSON.stringify(['ACTIVE']),
