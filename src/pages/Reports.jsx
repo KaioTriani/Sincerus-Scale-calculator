@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   FileUp, FileText, FileSpreadsheet, Plus, Trash2, ChevronDown, Landmark, AlertTriangle, CheckCircle2,
-  X, Printer, Loader2, RotateCcw, Info, Search, Check, Building2, CalendarClock, Megaphone,
+  X, Printer, Loader2, RotateCcw, Info, Search, Check, Building2, CalendarClock, Megaphone, Send,
 } from 'lucide-react';
 import Reveal from '../components/Reveal';
 import Button from '../components/Button';
@@ -13,6 +13,7 @@ import { draftToReport, fetchPtax, shortResult } from '../lib/report/build';
 import { listClients, addClient, loadClientCampaigns, saveCampaigns, setClientCurrency } from '../lib/report/library';
 import { metaAvailable } from '../lib/api';
 import ActiveAdsPanel from '../components/ActiveAdsPanel';
+import ClientReportPanel from '../components/ClientReportPanel';
 
 const DRAFT_KEY = 'sincerus.report.draft.v2';
 const uid = () => Math.random().toString(36).slice(2, 9);
@@ -232,7 +233,7 @@ function Preview({ html, fileName, onClose }) {
     return () => window.removeEventListener('keydown', k);
   }, [onClose]);
   return createPortal(
-    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-50 flex flex-col bg-carbon-950/95 backdrop-blur-xl">
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[60] flex flex-col bg-carbon-950/95 backdrop-blur-xl">
       <div className="flex flex-wrap items-center gap-3 border-b border-white/10 px-4 py-3 sm:px-6">
         <FileText className="h-5 w-5 text-brand-300" />
         <p className="min-w-0 flex-1 truncate text-sm font-semibold">{fileName}.pdf</p>
@@ -345,6 +346,7 @@ export default function Reports() {
   const fileRef = useRef(null);
   const lastRows = useRef(null);
   const [activeOpen, setActiveOpen] = useState(false);
+  const [clientOpen, setClientOpen] = useState(false);
   const [metaOn, setMetaOn] = useState(false);
   useEffect(() => { metaAvailable().then((s) => setMetaOn(!!s.configured)).catch(() => setMetaOn(false)); }, []);
 
@@ -470,13 +472,15 @@ export default function Reports() {
         <div>
           <p className="text-sm text-white/50">Meta Ads</p>
           <h1 className="mt-1 text-3xl font-bold sm:text-4xl">Relatórios</h1>
-          <p className="mt-2 max-w-2xl text-sm text-white/50">Escolha o cliente: as campanhas ativas do período aparecem com todos os anúncios. Confira e gere o PDF Sincerus e a planilha — sempre com gasto em dólar e em real.</p>
+          <p className="mt-2 max-w-2xl text-sm text-white/50"><b className="font-semibold text-white/70">Desempenho (interno):</b> escolha o cliente, as campanhas ativas do período aparecem com todos os anúncios; gere o PDF Sincerus e a planilha, sempre em dólar e em real. Para enviar ao cliente, use <b className="font-semibold text-white/70">Relatório para cliente</b>.</p>
         </div>
         <div className="flex flex-wrap gap-2">
-          {metaOn && <Button onClick={() => setActiveOpen(true)} icon={Megaphone}>Anúncios ativos (todos os clientes)</Button>}
+          {metaOn && <Button onClick={() => setClientOpen(true)} icon={Send}>Relatório para cliente</Button>}
+          {metaOn && <Button variant="ghost" onClick={() => setActiveOpen(true)} icon={Megaphone}>Anúncios ativos <span className="ml-1 text-[10px] font-normal uppercase tracking-wider text-white/45">interno</span></Button>}
           <button onClick={() => { if (confirm('Limpar o rascunho atual?')) { setDraft(EMPTY()); setConfirmed(false); } }} className="chip"><RotateCcw className="h-3.5 w-3.5" /> Novo</button>
         </div>
       </Reveal>
+      <ClientReportPanel open={clientOpen} onClose={() => setClientOpen(false)} onPreview={({ html, fileName }) => setPreview({ html, fileName })} initialClient={/^act_d+$/.test(draft.clientId || '') ? draft.clientId : ''} />
       <ActiveAdsPanel
         open={activeOpen}
         onClose={() => setActiveOpen(false)}
