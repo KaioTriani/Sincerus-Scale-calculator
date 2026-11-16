@@ -317,3 +317,12 @@ export function buildClientReportHtml(m, texts) {
     html: `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>${esc(fileName)}</title><link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet"><style>${CSS}</style></head><body>${pages.join('\n')}</body></html>`,
   };
 }
+
+// Vários clientes no mesmo PDF: as páginas de cada um, uma depois da outra
+export function buildClientReportsHtml(list) {
+  if (list.length === 1) return buildClientReportHtml(list[0].model, list[0].texts);
+  const parts = list.map(({ model, texts }) => buildClientReportHtml(model, texts).html.match(/<body>([\s\S]*)<\/body>/)[1]);
+  const head = buildClientReportHtml(list[0].model, list[0].texts).html.match(/<head>([\s\S]*)<\/head>/)[1].replace(/<title>[\s\S]*?<\/title>/, '');
+  const fileName = `Relatorios_${list.length}-clientes_${list[0].model.periodShort.replace(/\//g, '-').replace(/ a /, '_a_')}`;
+  return { fileName, html: `<!doctype html><html lang="pt-BR"><head><title>${fileName}</title>${head}</head><body>${parts.join('\n')}</body></html>` };
+}
