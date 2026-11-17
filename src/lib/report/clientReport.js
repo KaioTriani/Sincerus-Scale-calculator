@@ -103,10 +103,23 @@ const singular = (s) => ({ conversas: 'conversa', 'visitas ao perfil': 'visita a
 // Rascunho dos textos (só com números do relatório; o analista revisa e completa)
 export function draftTexts(m) {
   const R = cap(m.resShort);
-  const leitura = [
-    `${m.n === 7 ? 'Em sete dias' : `Em ${m.n} dias`}, a ${m.client} recebeu ==${int(m.results)} ${m.resShort}== a ==${brl(m.cpr)}== cada.`,
-    m.response != null ? ` Do público alcançado, ==${pct(m.response, 2)}== ${m.resShort === 'conversas' ? 'chamou no WhatsApp' : 'gerou um resultado'}${m.responseRef ? `, ${m.response >= m.responseRef ? 'acima' : 'abaixo'} da referência de ${pct(m.responseRef, 1)}` : ''}.` : '',
-  ].join('');
+  // Leitura no formato do modelo: o que aconteceu (com o custo em contexto) → ponto de atenção → próximo ganho
+  const conv = m.resShort === 'conversas';
+  const quando = m.n === 7 ? 'Em sete dias' : m.n === 1 ? 'Em um dia' : `Em ${m.n} dias`;
+  const cprCmp = m.cmp?.cpr && m.cpr != null ? m.cpr / m.cmp.cpr - 1 : null;
+  const contexto = cprCmp != null
+    ? ` — ${pct(Math.abs(cprCmp), 0)} ${cprCmp <= 0 ? 'mais barato' : 'mais caro'} que em ${m.cmp.name.toLowerCase()}`
+    : m.ceiling && m.cpr != null ? ` — ${m.cpr <= m.ceiling ? 'abaixo' : 'acima'} do teto de ${brl(m.ceiling)} do nicho` : '';
+  const viu = conv ? 'de quem viu chamou' : 'de quem viu gerou resultado';
+  let atencao = '';
+  if (m.ceiling && m.cpr != null && m.cpr > m.ceiling) {
+    atencao = ` O ponto de atenção é o custo: ==${brl(m.cpr)}== por ${singular(m.resShort)}, acima do teto de ${brl(m.ceiling)}. O próximo ganho está em baixar o custo de entrega e testar novos criativos.`;
+  } else if (m.response != null && m.responseRef && m.response < m.responseRef) {
+    atencao = ` O ponto de atenção é a resposta ao anúncio: só ==${pct(m.response, 2)}== ${viu}, abaixo da referência de ${pct(m.responseRef, 1)}. O próximo ganho está no criativo.`;
+  } else if (m.response != null) {
+    atencao = ` A resposta ao anúncio está boa: ==${pct(m.response, 2)}== ${viu}${m.responseRef ? `, acima da referência de ${pct(m.responseRef, 1)}` : ''}. O próximo ganho está em escalar a verba com cuidado com a frequência (${dec(m.T.freq)}x).`;
+  }
+  const leitura = `${quando}, a ${m.client} recebeu ==${int(m.results)} ${m.resShort}==${conv ? ' no WhatsApp' : ''} a ==${brl(m.cpr)}== cada${contexto}.${atencao}`;
   const d = [];
   if (m.cmp) {
     const sp = m.cmp.rows[0], pd = m.cmp.rows[1], cp = m.cmp.rows[2];
@@ -210,7 +223,7 @@ table { width: 100%; border-collapse: collapse; }
 .foot b { color: #12141A; letter-spacing: 1.2pt; margin-right: 2mm; }
 .kick { color: #F76000; font-size: 6.8pt; font-weight: 700; letter-spacing: 1.6pt; text-transform: uppercase; margin: 12mm 0 4mm; }
 .lead { font-family: Georgia, 'Times New Roman', serif; font-size: 11.4pt; line-height: 1.55; margin: 0; }
-mark { background: #FF7AB6; color: #12141A; padding: 0 .4mm; }
+mark { background: none; color: #12141A; font-weight: 700; text-decoration: underline; text-decoration-color: #F76000; text-decoration-thickness: .55mm; text-underline-offset: .9mm; }
 .cmp th { font-size: 6.2pt; letter-spacing: 1pt; color: #5B6068; text-transform: uppercase; text-align: right; padding: 0 0 2.5mm; border-bottom: .4mm solid #12141A; }
 .cmp th:first-child { text-align: left; }
 .cmp td { padding: 2.8mm 0; text-align: right; border-bottom: .3mm solid #E9EAEC; font-size: 8.4pt; }

@@ -43,7 +43,8 @@ export async function htmlToPdfBlob(html) {
     // tira o fundo/sombra do modo de tela antes de capturar
     doc.body.style.background = '#fff'; doc.body.style.padding = '0';
     // o html2canvas desloca o fundo de texto marcado: no arquivo baixado o destaque vira texto forte em rosa
-    doc.head.appendChild(Object.assign(doc.createElement('style'), { textContent: 'mark{background:none!important;color:#D6006F!important;font-weight:700;display:inline!important;padding:0!important}' }));
+    // destaque da leitura: sublinhado laranja (o html2canvas não aplica espessura/afastamento, mas mantém a cor)
+    doc.head.appendChild(Object.assign(doc.createElement('style'), { textContent: 'mark{background:none!important;display:inline!important;padding:0!important}' }));
     const pages = [...doc.querySelectorAll('section.page, section.sheet')];
     const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4', compress: true });
     for (const [i, p] of pages.entries()) {
