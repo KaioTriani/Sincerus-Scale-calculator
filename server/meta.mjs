@@ -211,12 +211,37 @@ export function overview(since, until, refresh) {
 }
 
 // ---------- Relatório para o cliente (nível campanha + conta, com período de comparação opcional) ----------
-const OBJETIVO = {
-  CONVERSATIONS: 'Conversas no WhatsApp', PROFILE_VISIT: 'Visitas ao perfil do Instagram', VISIT_INSTAGRAM_PROFILE: 'Visitas ao perfil do Instagram',
-  LEAD_GENERATION: 'Geração de cadastros', QUALITY_LEAD: 'Geração de cadastros', LINK_CLICKS: 'Cliques no link', LANDING_PAGE_VIEWS: 'Visitas ao site',
-  OFFSITE_CONVERSIONS: 'Vendas no site', VALUE: 'Vendas no site', POST_ENGAGEMENT: 'Engajamento', THRUPLAY: 'Visualizações de vídeo', REACH: 'Alcance', IMPRESSIONS: 'Impressões',
+// "Resultados" vêm do campo results da Meta: o mesmo indicador e valor da coluna Resultados do Gerenciador.
+const INDICATOR = {
+  'actions:onsite_conversion.messaging_conversation_started_7d': ['Conversas por mensagem iniciadas', 'Conversas no WhatsApp'],
+  profile_visit_view: ['Visitas ao perfil do Instagram', 'Visitas ao perfil do Instagram'],
+  'actions:onsite_conversion.purchase': ['Compras por mensagem', 'Compras pelo WhatsApp'],
+  'actions:offsite_conversion.fb_pixel_purchase': ['Compras no site', 'Vendas no site'],
+  'actions:omni_purchase': ['Compras', 'Vendas'],
+  'actions:onsite_conversion.lead_grouped': ['Leads', 'Geração de cadastros'],
+  'actions:lead': ['Leads', 'Geração de cadastros'],
+  'actions:link_click': ['Cliques no link', 'Cliques no link'],
+  'actions:landing_page_view': ['Visualizações da página de destino', 'Visitas ao site'],
+  'actions:post_engagement': ['Engajamento com a publicação', 'Engajamento'],
+  'actions:video_thruplay_watched_actions': ['ThruPlays', 'Visualizações de vídeo'],
+  reach: ['Alcance', 'Alcance'],
+  impressions: ['Impressões', 'Impressões'],
 };
-const sumMetrics = (rows) => rows.reduce((t, r) => ({ spend: t.spend + r.spend, imp: t.imp + r.imp, results: t.results + (r.results || 0) }), { spend: 0, imp: 0, results: 0 });
+const CONV = 'actions:onsite_conversion.messaging_conversation_started_7d';
+const indLabel = (ind) => INDICATOR[ind]?.[0] || String(ind || 'Resultados').replace(/^actions:/, '').replace(/^onsite_conversion\./, '').replace(/_/g, ' ');
+const indObjective = (ind) => INDICATOR[ind]?.[1] || indLabel(ind);
+const ownIndicator = (r) => r?.results?.[0]?.indicator || null;
+const ownValue = (r) => (r?.results?.[0] ? Number(r.results[0].values?.[0]?.value || 0) : null);
+const actionOf = (actions, type) => { const a = Array.isArray(actions) ? actions.find((x) => x.action_type === type) : null; return a ? Number(a.value) : null; };
+// valor do indicador principal numa linha de insights (campanha ou conta)
+function valueFor(r, ind) {
+  if (!ind) return null;
+  if (ownIndicator(r) === ind) return ownValue(r);
+  if (ind.startsWith('actions:')) return actionOf(r.actions, ind.slice(8));
+  if (ind === 'reach') return Number(r.reach || 0);
+  if (ind === 'impressions') return Number(r.impressions || 0);
+  return null;
+}
 const metrics = (ins) => ({
   spend: Number(ins?.spend || 0), imp: Number(ins?.impressions || 0), reach: Number(ins?.reach || 0),
   freq: ins?.frequency != null ? Number(ins.frequency) : null, cpm: ins?.cpm != null ? Number(ins.cpm) : null,
@@ -229,37 +254,23 @@ export function clientReport(account, since, until, cmpSince, cmpUntil, refresh)
   }
   return cached(`client:${account}:${since}:${until}:${cmpSince || ''}:${cmpUntil || ''}`, async () => {
     const tr = (s, u) => JSON.stringify({ since: s, until: u });
-    const insFields = 'campaign_id,campaign_name,spend,impressions,reach,frequency,cpm,actions';
+    const insFields = 'campaign_id,campaign_name,spend,impressions,reach,frequency,cpm,actions,results';
+    const accFields = 'spend,impressions,reach,frequency,cpm,actions';
     const [info, campaigns, adsets, byCamp, acc, cmpCamp, cmpAcc, bySet, cmpSet] = await Promise.all([
       graph(account, { fields: 'name,currency,timezone_name' }, { all: false }),
       graph(`${account}/campaigns`, { fields: 'id,name,effective_status,start_time,daily_budget,lifetime_budget', limit: '500' }),
-      graph(`${account}/adsets`, { fields: 'id,campaign_id,optimization_goal,effective_status,daily_budget', limit: '500' }),
+      graph(`${account}/adsets`, { fields: 'id,campaign_id,effective_status,daily_budget', limit: '500' }),
       graph(`${account}/insights`, { level: 'campaign', time_range: tr(since, until), fields: insFields, limit: '500' }),
-      graph(`${account}/insights`, { level: 'account', time_range: tr(since, until), fields: 'spend,impressions,reach,frequency,cpm,actions' }),
+      graph(`${account}/insights`, { level: 'account', time_range: tr(since, until), fields: accFields }),
       cmpSince ? graph(`${account}/insights`, { level: 'campaign', time_range: tr(cmpSince, cmpUntil), fields: insFields, limit: '500' }) : [],
-      cmpSince ? graph(`${account}/insights`, { level: 'account', time_range: tr(cmpSince, cmpUntil), fields: 'spend,impressions,reach,frequency,cpm,actions' }) : [],
+      cmpSince ? graph(`${account}/insights`, { level: 'account', time_range: tr(cmpSince, cmpUntil), fields: accFields }) : [],
       // alcance como no Gerenciador: soma do alcance dos conjuntos (a API devolve outro valor no nível campanha/conta)
       graph(`${account}/insights`, { level: 'adset', time_range: tr(since, until), fields: 'campaign_id,reach', limit: '500' }),
       cmpSince ? graph(`${account}/insights`, { level: 'adset', time_range: tr(cmpSince, cmpUntil), fields: 'campaign_id,reach', limit: '500' }) : [],
     ]);
     const reachBy = (list) => list.reduce((m, r) => m.set(r.campaign_id, (m.get(r.campaign_id) || 0) + Number(r.reach || 0)), new Map());
     const reachNow = reachBy(bySet), reachCmp = reachBy(cmpSet);
-    // reach/frequência ajustados ao Gerenciador
     const fixReach = (m, reach) => ({ ...m, reach, freq: reach ? m.imp / reach : null });
-
-    // meta de otimização de cada campanha = a mais comum entre os conjuntos
-    const goalOf = new Map();
-    const count = new Map();
-    for (const s of adsets) {
-      const k = `${s.campaign_id}|${s.optimization_goal}`;
-      count.set(k, (count.get(k) || 0) + 1);
-      const cur = goalOf.get(s.campaign_id);
-      if (!cur || count.get(k) > count.get(`${s.campaign_id}|${cur}`)) goalOf.set(s.campaign_id, s.optimization_goal);
-    }
-    const resultsOf = (campId, actions) => {
-      const types = RESULT[goalOf.get(campId)]?.[1];
-      return actionValue(actions, types)?.value ?? null;
-    };
 
     // orçamento diário atual (campanhas ativas): orçamento da campanha ou soma dos conjuntos ativos
     let dailyBudget = 0;
@@ -268,36 +279,46 @@ export function clientReport(account, since, until, cmpSince, cmpUntil, refresh)
       else dailyBudget += adsets.filter((s) => s.campaign_id === c.id && s.effective_status === 'ACTIVE' && s.daily_budget).reduce((t, s) => t + Number(s.daily_budget) / 100, 0);
     }
 
+    const spent = byCamp.filter((r) => Number(r.spend) > 0 || Number(r.impressions) > 0).sort((a, b) => Number(b.spend) - Number(a.spend));
+    // indicador principal: o da campanha de maior gasto que teve resultado; se nenhuma teve, conversas (quando houver)
+    const firstWithResult = spent.find((r) => ownValue(r) > 0);
+    let main = firstWithResult ? ownIndicator(firstWithResult) : null;
+    if (!main) main = actionOf(acc[0]?.actions, CONV.slice(8)) > 0 ? CONV : ownIndicator(spent[0]) || CONV;
+
     const campInfo = new Map(campaigns.map((c) => [c.id, c]));
-    const rows = byCamp.map((r) => {
+    const rows = spent.map((r) => {
       const c = campInfo.get(r.campaign_id) || {};
-      const goal = goalOf.get(r.campaign_id);
+      const own = ownIndicator(r);
+      const v = valueFor(r, main);
       return {
         id: r.campaign_id, name: c.name || r.campaign_name, status: STATUS[c.effective_status] || c.effective_status || '',
         active: c.effective_status === 'ACTIVE', startTime: c.start_time?.slice(0, 10) || '',
-        goal, resultLabel: RESULT[goal]?.[0] || 'Resultados', objective: OBJETIVO[goal] || '',
-        ...fixReach(metrics(r), reachNow.get(r.campaign_id) || 0), results: resultsOf(r.campaign_id, r.actions),
+        goal: v != null ? main : own, resultLabel: indLabel(v != null ? main : own), objective: indObjective(main),
+        ownIndicator: own, ownLabel: indLabel(own), ownResults: ownValue(r),
+        ...fixReach(metrics(r), reachNow.get(r.campaign_id) || 0), results: v != null ? v : ownValue(r),
       };
-    }).filter((r) => r.spend > 0 || r.imp > 0).sort((a, b) => b.spend - a.spend);
+    });
 
     const live = campaigns.filter((c) => c.effective_status !== 'DELETED' && c.effective_status !== 'ARCHIVED');
     const withSpend = new Set(rows.map((r) => r.id));
     const idle = live.filter((c) => !withSpend.has(c.id)).map((c) => ({ id: c.id, name: c.name, status: STATUS[c.effective_status] || c.effective_status }));
 
-    const cmpRows = cmpCamp.map((r) => ({ id: r.campaign_id, name: r.campaign_name, goal: goalOf.get(r.campaign_id), ...fixReach(metrics(r), reachCmp.get(r.campaign_id) || 0), results: resultsOf(r.campaign_id, r.actions) }));
-    // total: gasto/impressões/CPM da conta; alcance = soma por campanha (como o Gerenciador mostra por linha)
-    // resultado total = ação do objetivo principal no nível da conta (inclui o que veio de campanhas com outro objetivo)
-    const mainGoal = rows[0]?.goal;
+    const cmpRows = cmpCamp.filter((r) => Number(r.spend) > 0 || Number(r.impressions) > 0).map((r) => {
+      const v = valueFor(r, main);
+      return { id: r.campaign_id, name: r.campaign_name, goal: v != null ? main : ownIndicator(r), ...fixReach(metrics(r), reachCmp.get(r.campaign_id) || 0), results: v != null ? v : ownValue(r) };
+    });
+    // total: gasto/impressões/CPM da conta; alcance = soma por campanha; resultado = indicador principal na conta
+    // (para ações, o número da conta inclui o que veio de campanhas com outro objetivo)
     const accTot = (list, campRows) => {
       if (!list[0]) return null;
-      const accRes = actionValue(list[0].actions, RESULT[mainGoal]?.[1])?.value;
-      const own = campRows.filter((r) => r.goal === mainGoal || goalOf.get(r.id) === mainGoal).reduce((t, r) => t + (r.results || 0), 0);
+      const own = campRows.filter((r) => r.goal === main).reduce((t, r) => t + (r.results || 0), 0);
+      const accRes = main.startsWith('actions:') ? actionOf(list[0].actions, main.slice(8)) : null;
       return { ...fixReach(metrics(list[0]), campRows.reduce((t, r) => t + r.reach, 0)), results: accRes ?? own, resultsOwnGoal: own, reachSummed: campRows.filter((r) => r.reach).length > 1 };
     };
 
     return {
       account, name: info.name, currency: info.currency, timezone: info.timezone_name, since, until, cmpSince: cmpSince || null, cmpUntil: cmpUntil || null,
-      fetchedAt: new Date().toISOString(), dailyBudget: dailyBudget || null,
+      fetchedAt: new Date().toISOString(), dailyBudget: dailyBudget || null, mainIndicator: main,
       campaigns: rows, idle,
       total: accTot(acc, rows) || { spend: 0, imp: 0, reach: 0, freq: null, cpm: null, results: 0 },
       compare: cmpSince ? { campaigns: cmpRows, total: accTot(cmpAcc, cmpRows) } : null,

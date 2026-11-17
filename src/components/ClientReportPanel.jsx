@@ -4,14 +4,17 @@
 import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { AnimatePresence, motion } from 'motion/react';
-import { X, Loader2, FileText, AlertTriangle, Plus, Trash2, Search, Sparkles, Check, SlidersHorizontal, ChevronDown } from 'lucide-react';
+import { X, Loader2, FileText, AlertTriangle, Plus, Trash2, Search, Sparkles, Check, SlidersHorizontal, ChevronDown, EyeOff, Eye, Download } from 'lucide-react';
 import { api } from '../lib/api';
 import { listClients } from '../lib/report/library';
 import { fetchPtax } from '../lib/report/build';
-import { computeClientReport, draftTexts, buildClientReportsHtml } from '../lib/report/clientReport';
+import { computeClientReport, draftTexts, buildClientReportsHtml, buildClientReportHtml } from '../lib/report/clientReport';
+import { downloadPdfs } from '../lib/report/pdfFiles';
 import DateRangePicker, { presetRange, compareLabel } from './DateRangePicker';
 
 const MANUAL = 'Cotação informada pelo usuário.';
+const HIDDEN_KEY = 'sincerus.clients.hidden.v1';
+const readHidden = () => { try { return new Set(JSON.parse(localStorage.getItem(HIDDEN_KEY)) || []); } catch { return new Set(); } };
 const inputCls = 'w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-sm outline-none transition placeholder:text-white/30 focus:border-brand/60';
 const num = (s) => { const v = parseFloat(String(s).replace(/\./g, '').replace(',', '.')); return Number.isFinite(v) ? v : null; };
 const norm = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
@@ -62,6 +65,15 @@ export default function ClientReportPanel({ open, onClose, onPreview, initialCli
   const [tab, setTab] = useState('');
   const [busy, setBusy] = useState(null); // { done, total }
   const [error, setError] = useState('');
+  const [hidden, setHidden] = useState(readHidden);
+  const [showHidden, setShowHidden] = useState(false);
+  const [dl, setDl] = useState(null); // progresso do download { i, n }
+  const toggleHidden = (id) => setHidden((h) => {
+    const n = new Set(h);
+    if (n.has(id)) n.delete(id); else { n.add(id); setSelected((sel) => { const x = new Set(sel); x.delete(id); return x; }); }
+    try { localStorage.setItem(HIDDEN_KEY, JSON.stringify([...n])); } catch { /* sem armazenamento */ }
+    return n;
+  });
 
   useEffect(() => { if (open && !clients.length) listClients().then((l) => setClients(l.filter((c) => c.source === 'meta'))).catch((e) => setError(e.message)); }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
@@ -71,7 +83,8 @@ export default function ClientReportPanel({ open, onClose, onPreview, initialCli
     return () => window.removeEventListener('keydown', h);
   }, [open, onClose]);
 
-  const shown = useMemo(() => clients.filter((c) => norm(c.name).includes(norm(q.trim()))), [clients, q]);
+  const shown = useMemo(() => clients.filter((c) => (showHidden || !hidden.has(c.id)) && norm(c.name).includes(norm(q.trim()))), [clients, q, hidden, showHidden]);
+  const nHidden = clients.filter((c) => hidden.has(c.id)).length;
   const nSel = clients.filter((c) => selected.has(c.id)).length;
   const allShownSel = shown.length > 0 && shown.every((c) => selected.has(c.id));
   const toggle = (id) => setSelected((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
@@ -121,6 +134,15 @@ export default function ClientReportPanel({ open, onClose, onPreview, initialCli
     } catch (err) { setError(err.message || 'Não consegui buscar os dados.'); } finally { setBusy(null); }
   };
 
+  const download = async (list) => {
+    if (!list.length) return;
+    setError('');
+    try {
+      const files = list.map((e) => buildClientReportHtml(modelOf(e), e.texts));
+      const period = dates.range.map((d) => d.split('-').reverse().slice(0, 2).join('-')).join('_a_');
+      await downloadPdfs(files, `Relatorios_clientes_${period}`, (i, n) => setDl({ i, n }));
+    } catch (err) { setError(`Falha ao gerar os arquivos: ${err.message || err}`); } finally { setDl(null); }
+  };
   const generate = () => {
     const list = ready.map((e) => ({ model: modelOf(e), texts: e.texts }));
     if (list.length) onPreview(buildClientReportsHtml(list));
@@ -160,11 +182,15 @@ export default function ClientReportPanel({ open, onClose, onPreview, initialCli
                           <span className="min-w-0 flex-1 truncate text-sm font-medium">{c.name}</span>
                           {!c.active && <span className="text-[10px] text-white/35">{c.status}</span>}
                           <span className="rounded-full border border-white/10 px-2 py-0.5 text-[10px] font-semibold text-white/55">{c.currency === 'USD' ? 'US$' : 'R$'}</span>
+                          <span role="button" tabIndex={0} title={hidden.has(c.id) ? 'Mostrar de novo na lista' : 'Ocultar da lista (cliente que saiu)'} onClick={(e) => { e.stopPropagation(); toggleHidden(c.id); }} onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); toggleHidden(c.id); } }} className="rounded-lg p-1 text-white/30 hover:bg-white/10 hover:text-white/80">
+                            {hidden.has(c.id) ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
+                          </span>
                         </button>
                       </li>
                     ))}
                     {!shown.length && <li className="px-3 py-3 text-sm text-white/45">{clients.length ? 'Nenhum cliente encontrado.' : 'Carregando clientes…'}</li>}
                   </ul>
+                  {nHidden > 0 && <button type="button" onClick={() => setShowHidden((v) => !v)} className="w-full border-t border-white/[0.07] px-4 py-2 text-left text-[11px] text-white/45 hover:text-white/75">{showHidden ? 'Esconder os ocultos' : `${nHidden} cliente(s) oculto(s) · mostrar`}</button>}
                 </div>
               </div>
 
@@ -221,7 +247,10 @@ export default function ClientReportPanel({ open, onClose, onPreview, initialCli
                       <div><Label>Leitura do período</Label><textarea value={cur.texts.leitura} onChange={(e) => patchEntry(cur.id, { texts: { ...cur.texts, leitura: e.target.value } })} rows={3} className={`${inputCls} resize-y`} /></div>
                       <div><Label>Destaques</Label><ItemList items={cur.texts.destaques} onChange={(d) => patchEntry(cur.id, { texts: { ...cur.texts, destaques: d } })} addLabel="Adicionar destaque" titlePh="Título do destaque" textPh="Explicação com os números" /></div>
                       <div><Label>Plano de ação</Label><ItemList items={cur.texts.plano} onChange={(p) => patchEntry(cur.id, { texts: { ...cur.texts, plano: p } })} addLabel="Adicionar ação" titlePh="Ação (ex.: Publicar duas variações de criativo)" textPh="Meta / motivo" /></div>
-                      <button onClick={() => patchEntry(cur.id, { texts: draftTexts(curModel) })} className="chip"><Sparkles className="h-3.5 w-3.5" /> Refazer rascunho deste cliente</button>
+                      <div className="flex flex-wrap gap-2">
+                        <button onClick={() => download([cur])} disabled={!!dl} className="chip disabled:opacity-40"><Download className="h-3.5 w-3.5" /> Baixar PDF de {cur.name}</button>
+                        <button onClick={() => patchEntry(cur.id, { texts: draftTexts(curModel) })} className="chip"><Sparkles className="h-3.5 w-3.5" /> Refazer rascunho deste cliente</button>
+                      </div>
                     </div>
                   )}
                 </div>
@@ -229,10 +258,16 @@ export default function ClientReportPanel({ open, onClose, onPreview, initialCli
             </div>
 
             <footer className="flex items-center justify-between gap-3 border-t border-white/[0.07] p-4">
-              <span className="text-xs text-white/45">{ready.length ? `${ready.length} cliente(s) prontos para o PDF` : 'Busque os dados para gerar o PDF'}</span>
-              <button onClick={generate} disabled={!ready.length} className="inline-flex items-center gap-2 rounded-xl bg-brand px-5 py-2.5 text-sm font-semibold text-black transition hover:brightness-110 disabled:opacity-40">
-                <FileText className="h-4 w-4" /> Gerar PDF{ready.length > 1 ? ` (${ready.length} clientes)` : ''}
-              </button>
+              <span className="text-xs text-white/45">{ready.length ? `${ready.length} cliente(s) prontos${ready.length > 1 ? ' · baixa um .zip com um PDF por cliente' : ''}` : 'Busque os dados para gerar os PDFs'}</span>
+              <div className="flex flex-wrap gap-2">
+                <button onClick={generate} disabled={!ready.length} className="inline-flex items-center gap-2 rounded-xl border border-white/15 px-4 py-2.5 text-sm font-semibold transition hover:bg-white/[0.06] disabled:opacity-40">
+                  <FileText className="h-4 w-4" /> Pré-visualizar
+                </button>
+                <button onClick={() => download(ready)} disabled={!ready.length || !!dl} className="inline-flex items-center gap-2 rounded-xl bg-brand px-5 py-2.5 text-sm font-semibold text-black transition hover:brightness-110 disabled:opacity-40">
+                  {dl ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+                  {dl ? `Gerando ${Math.min(dl.i + 1, dl.n)} de ${dl.n}…` : ready.length > 1 ? `Baixar ${ready.length} PDFs (um por cliente)` : 'Baixar PDF'}
+                </button>
+              </div>
             </footer>
           </motion.aside>
         </motion.div>

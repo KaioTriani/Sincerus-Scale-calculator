@@ -239,15 +239,16 @@ export function buildClientReportHtml(m, texts) {
   const isConv = m.resShort === 'conversas';
   const pages = [];
   const foot = (p, t) => `<div class="foot"><span><b>SINCERUS SCALE</b>· Relatório de tráfego pago — ${esc(m.client)}</span><span>Página ${p} de ${t}</span></div>`;
-  const hasPage2 = !!(texts.leitura?.trim() || m.cmp || texts.destaques?.length || texts.plano?.length);
+  const moveExtra = m.camps.length + (m.idle.length ? 1 : 0) > 2; // muitas campanhas: barras e faixa vão para a página 2
+  const hasPage2 = moveExtra || !!(texts.leitura?.trim() || m.cmp || texts.destaques?.length || texts.plano?.length);
   const total = hasPage2 ? 2 : 1;
 
   // ---------- página 1 ----------
   const fw = (v) => Math.max(0.55, Math.min(1, v));
   const impW = 1, reachW = m.T.imp ? fw(m.T.reach / m.T.imp + 0.25) : 0.7, resW = 0.45;
   const ceilingTxt = m.ceiling && m.cpr != null ? `${pct(Math.abs(1 - m.cpr / m.ceiling), 0)} ${m.cpr <= m.ceiling ? 'abaixo' : 'acima'} do teto do nicho (${brl(m.ceiling)})` : '';
-  const rows = m.camps.map((c) => `<tr><td><div class="nm"><i></i><div><b>${esc(c.label)}</b><small>${c.active ? `No ar desde ${c.startTime ? dmy(c.startTime) : '—'}` : esc(c.status || 'Desligada')}${!c.own && c.results != null ? ` · ${esc(c.resultLabel)}` : ''}</small></div></div></td>
-    <td>${brl(c.spendBrl)}</td><td>${c.results != null ? int(c.results) : '—'}</td><td class="${c.own && m.ceiling && c.cpr != null && c.cpr <= m.ceiling ? 'g' : ''}">${brl(c.cpr)}</td><td>${int(c.imp)}</td><td>${int(c.reach)}</td><td>${c.freq != null ? `${dec(c.freq)}x` : '—'}</td><td>${brl(c.cpmBrl)}</td></tr>`).join('');
+  const rows = m.camps.map((c) => `<tr><td><div class="nm"><i></i><div><b>${esc(c.label)}</b><small>${c.active ? `No ar desde ${c.startTime ? dmy(c.startTime) : '—'}` : esc(c.status || 'Desligada')}${!c.own && c.ownResults != null ? ` · ${esc(c.ownLabel)}: ${int(c.ownResults)}` : ''}</small></div></div></td>
+    <td>${brl(c.spendBrl)}</td><td>${c.own && c.results != null ? int(c.results) : '—'}</td><td class="${c.own && m.ceiling && c.cpr != null && c.cpr <= m.ceiling ? 'g' : ''}">${c.own ? brl(c.cpr) : '—'}</td><td>${int(c.imp)}</td><td>${int(c.reach)}</td><td>${c.freq != null ? `${dec(c.freq)}x` : '—'}</td><td>${brl(c.cpmBrl)}</td></tr>`).join('');
   const idleRow = m.idle.length ? `<tr class="off"><td><div class="nm off"><i></i><div><b style="color:#8A8F98">${m.idle.length} ${m.idle.length === 1 ? 'campanha desligada' : 'campanhas desligadas'}</b><small>Sem veiculação no período</small></div></div></td><td>R$ 0,00</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>` : '';
   const bar = (label, val, txt, w, color) => `<div class="bar"><div><span>${label}</span><b>${txt}</b></div><em><u style="width:${Math.max(2, Math.min(100, w * 100))}%;background:${color}"></u></em></div>`;
   const barCols = [];
@@ -265,6 +266,8 @@ export function buildClientReportHtml(m, texts) {
     barCols.push(`<div><h4>${R} por dia</h4>${bar(esc(m.periodShort), m.perDay, dec(m.perDay, 1), m.perDay / mx, '#F76000')}${bar(esc(m.cmp.name), m.cmp.perDay, dec(m.cmp.perDay, 1), (m.cmp.perDay || 0) / mx, '#C9CBD0')}<p>${v != null ? `${pct(Math.abs(v), 0)} ${v >= 0 ? 'mais' : 'menos'} ${m.resShort} por dia que em ${esc(m.cmp.name.toLowerCase())}${m.cmp.spendDay ? `, com ${pct(Math.abs(m.spendDay / m.cmp.spendDay - 1), 0)} ${m.spendDay <= m.cmp.spendDay ? 'menos' : 'mais'} verba diária` : ''}.` : ''}</p></div>`);
   }
 
+  const extra = `${barCols.length ? `<div class="sec" style="margin-top:7mm"></div><div class="bars" style="grid-template-columns:repeat(${barCols.length},1fr)">${barCols.join('')}</div>` : ''}
+      <div class="strip"><div><b>${int(m.results)}</b><span>${esc(R)}</span></div><div><b class="o">${brl(m.cpr)}</b><span>Custo por ${one}</span></div><div><b>${dec(m.perDay, 0)}</b><span>${esc(R)} por dia</span></div>${m.budgetUse != null ? `<div><b>${pct(m.budgetUse, 0)}</b><span>Uso do orçamento</span></div>` : `<div><b>${brl(m.cpm)}</b><span>CPM</span></div>`}</div>`;
   pages.push(`<section class="page">
     <div class="hero">
       <div class="brand"><i></i>SINCERUS SCALE<span>GESTÃO DE TRÁFEGO PAGO</span></div>
@@ -289,8 +292,7 @@ export function buildClientReportHtml(m, texts) {
       <table class="camps"><thead><tr><th>Campanha</th><th>Investido</th><th>${esc(R)}</th><th>Custo</th><th>Impressões</th><th>Alcance</th><th>Freq.</th><th>CPM</th></tr></thead>
       <tbody>${rows}${idleRow}<tr class="tot"><td>Total</td><td>${brl(m.spendBrl)}</td><td>${int(m.results)}</td><td>${brl(m.cpr)}</td><td>${int(m.T.imp)}</td><td>${int(m.T.reach)}${m.T.reachSummed ? '*' : ''}</td><td>${m.T.freq != null ? `${dec(m.T.freq)}x` : '—'}</td><td>${brl(m.cpm)}</td></tr></tbody></table>
       ${m.mixed || m.T.reachSummed || m.fromOthers ? `<p class="note">${m.fromOthers ? `Total inclui ${int(m.fromOthers)} ${esc(m.resShort)} vindas de campanhas com outro objetivo. ` : m.mixed ? `Total de ${esc(m.resShort)} considera só as campanhas com esse objetivo. ` : ''}${m.T.reachSummed ? '*Alcance total = soma do alcance de cada campanha (uma pessoa pode ter visto mais de uma).' : ''}</p>` : ''}
-      ${barCols.length ? `<div class="sec" style="margin-top:7mm"></div><div class="bars" style="grid-template-columns:repeat(${barCols.length},1fr)">${barCols.join('')}</div>` : ''}
-      <div class="strip"><div><b>${int(m.results)}</b><span>${esc(R)}</span></div><div><b class="o">${brl(m.cpr)}</b><span>Custo por ${one}</span></div><div><b>${dec(m.perDay, 0)}</b><span>${esc(R)} por dia</span></div>${m.budgetUse != null ? `<div><b>${pct(m.budgetUse, 0)}</b><span>Uso do orçamento</span></div>` : `<div><b>${brl(m.cpm)}</b><span>CPM</span></div>`}</div>
+      ${moveExtra ? '' : extra}
     </div>
     ${foot(1, total)}
   </section>`);
@@ -304,6 +306,7 @@ export function buildClientReportHtml(m, texts) {
     const ins = (texts.destaques || []).filter((d) => d.title?.trim() || d.text?.trim()).map((d, i) => `<div class="ins"><span>${String(i + 1).padStart(2, '0')}</span><div><h3>${rich(d.title)}</h3><p>${rich(d.text)}</p></div></div>`).join('');
     const plan = (texts.plano || []).filter((p) => p.title?.trim() || p.text?.trim());
     pages.push(`<section class="page"><div class="wrap">
+      ${moveExtra ? `<div style="height:4mm"></div>${extra}` : ''}
       ${texts.leitura?.trim() ? `<div class="kick">Leitura ${m.n === 7 ? 'da semana' : 'do período'}</div><p class="lead">${rich(texts.leitura)}</p>` : '<div style="height:6mm"></div>'}
       ${cmpTable}
       ${ins ? `<div style="margin-top:5mm">${ins}</div>` : ''}
