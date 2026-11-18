@@ -350,3 +350,56 @@ export function balances(refresh) {
     return { fetchedAt: new Date().toISOString(), accounts: rows };
   }, refresh);
 }
+
+// ---------- Saúde dos anúncios (para os alertas automáticos) ----------
+// Reprovados / com problema, duplicados no mesmo conjunto, ativos sem entrega ontem e frequência alta em 7 dias.
+export function adHealth(account, refresh) {
+  if (!/^act_\d+$/.test(account)) throw Object.assign(new Error('Conta inválida.'), { status: 400 });
+  return cached(`health:${account}`, async () => {
+    const [ads, yday, freq] = await Promise.all([
+      graph(`${account}/ads`, { fields: 'id,name,effective_status,configured_status,adset_id,campaign_id,creative{id},issues_info,ad_review_feedback,adset{name,effective_status},campaign{name,effective_status,start_time}', limit: '500',
+        effective_status: JSON.stringify(['ACTIVE', 'DISAPPROVED', 'WITH_ISSUES', 'PENDING_REVIEW', 'IN_PROCESS']) }),
+      graph(`${account}/insights`, { level: 'ad', date_preset: 'yesterday', fields: 'ad_id,impressions,reach,spend', limit: '500' }),
+      graph(`${account}/insights`, { level: 'adset', date_preset: 'last_7d', fields: 'adset_id,adset_name,frequency,impressions', limit: '500' }),
+    ]);
+    const live = (a) => a.configured_status === 'ACTIVE' && a.campaign?.effective_status === 'ACTIVE' && a.adset?.effective_status === 'ACTIVE';
+    const issues = [];
+    for (const a of ads) {
+      if (a.effective_status === 'DISAPPROVED' && a.configured_status === 'ACTIVE') {
+        const why = Object.values(a.ad_review_feedback?.global || {})[0] || '';
+        issues.push({ kind: 'reprovado', key: `rep:${a.id}`, ad: a.name, campaign: a.campaign?.name, detail: why ? String(why).slice(0, 140) : 'Anúncio reprovado pela Meta' });
+      } else if (a.effective_status === 'WITH_ISSUES') {
+        const why = a.issues_info?.[0]?.error_summary || a.issues_info?.[0]?.error_message || 'Anúncio com problema de veiculação';
+        issues.push({ kind: 'erro', key: `err:${a.id}`, ad: a.name, campaign: a.campaign?.name, detail: String(why).slice(0, 140) });
+      }
+    }
+    // duplicados: mesmo criativo (ou mesmo nome) ativo duas vezes no mesmo conjunto
+    const seen = new Map();
+    for (const a of ads.filter((x) => x.effective_status === 'ACTIVE' && live(x))) {
+      for (const k of [`c:${a.adset_id}:${a.creative?.id}`, `n:${a.adset_id}:${a.name.trim().toLowerCase()}`]) {
+        if (k.endsWith(':undefined')) continue;
+        if (seen.has(k)) { const o = seen.get(k); issues.push({ kind: 'duplicado', key: `dup:${[o.id, a.id].sort().join('-')}`, ad: a.name, campaign: a.campaign?.name, detail: `Duplicado no conjunto "${a.adset?.name || ''}" (${k.startsWith('c:') ? 'mesmo criativo' : 'mesmo nome'})` }); break; }
+        seen.set(k, a);
+      }
+    }
+    // campanha ativa que quase não entregou ontem (baixo alcance) — por campanha, não por anúncio:
+    // a Meta concentra a verba em poucos anúncios, então anúncio sem impressão isolado é normal
+    const imp = new Map(yday.map((r) => [r.ad_id, Number(r.impressions || 0)]));
+    const byCamp = new Map();
+    for (const a of ads.filter((x) => x.effective_status === 'ACTIVE' && live(x))) {
+      // campanha que começou ontem ou hoje ainda não teve um dia inteiro para entregar
+      if (a.campaign?.start_time && Date.now() - new Date(a.campaign.start_time).getTime() < 2 * 86400000) continue;
+      const c = byCamp.get(a.campaign_id) || { name: a.campaign?.name, imp: 0, ads: 0 };
+      c.imp += imp.get(a.id) || 0; c.ads += 1; byCamp.set(a.campaign_id, c);
+    }
+    for (const [id, c] of byCamp) {
+      if (c.imp < 300) issues.push({ kind: 'baixo alcance', key: `low:${id}`, ad: '', campaign: c.name, detail: c.imp ? `Campanha ativa com só ${c.imp} impressões ontem (${c.ads} anúncios)` : `Campanha ativa sem nenhuma impressão ontem (${c.ads} anúncios)` });
+    }
+    // frequência alta nos últimos 7 dias (conjunto)
+    for (const s of freq) {
+      const f = Number(s.frequency || 0);
+      if (f >= 3.5 && Number(s.impressions || 0) > 1000) issues.push({ kind: 'frequência alta', key: `freq:${s.adset_id}`, ad: s.adset_name, campaign: '', detail: `Frequência de ${f.toFixed(2).replace('.', ',')}x em 7 dias` });
+    }
+    return issues;
+  }, refresh);
+}

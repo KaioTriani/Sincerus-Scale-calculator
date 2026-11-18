@@ -3,3 +3,5 @@ dist/
 .env*
 *.tsbuildinfo
 *.local.md
+dist-server/
+server/data/

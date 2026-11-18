@@ -6,6 +6,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { login, logout, readSession, users } from './auth.mjs';
 import * as meta from './meta.mjs';
+import { runJob, startScheduler } from './jobs.mjs';
+import { servePublicFile } from './whatsapp.mjs';
 
 const ROOT = path.resolve(fileURLToPath(new URL('../dist', import.meta.url)));
 // A hospedagem informa a porta em PORT (pode ser número ou caminho de socket); localmente, 3000
@@ -31,6 +33,16 @@ async function api(req, res, url) {
     if (route === 'POST /api/auth/logout') return logout(req, res, send);
     const user = readSession(req);
     if (route === 'GET /api/auth/me') return user ? send(200, user) : send(401, { error: 'Sessão expirada.' });
+    // rotinas automáticas: Cron da Hostinger (?key=JOB_SECRET) ou usuário logado. ?dry=1 gera sem enviar e espera o resultado.
+    if (url.pathname === '/api/jobs/run' && (req.method === 'GET' || req.method === 'POST')) {
+      const key = process.env.JOB_SECRET;
+      if (!user && !(key && key.length >= 24 && url.searchParams.get('key') === key)) return send(401, { error: 'Não autorizado.' });
+      const job = url.searchParams.get('job') || '';
+      const dry = url.searchParams.get('dry') === '1';
+      if (dry) return send(200, await runJob(job, { dry: true }));
+      runJob(job).catch(() => {}); // roda em segundo plano (pode levar minutos)
+      return send(202, { started: job });
+    }
     if (!user) return send(401, { error: 'Faça login.' });
 
     const q = (k) => url.searchParams.get(k) || '';
@@ -76,9 +88,11 @@ function serveStatic(req, res, url) {
 http.createServer((req, res) => {
   const url = new URL(req.url, 'http://localhost');
   if (url.pathname.startsWith('/api/')) return api(req, res, url);
+  if (url.pathname.startsWith('/files/')) return servePublicFile(req, res, url); // PDFs enviados pelo WhatsApp (link temporário)
   if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(405); return res.end(); }
   serveStatic(req, res, url);
 }).listen(PORT, () => {
+  startScheduler();
   console.log(`Sincerus Scale na porta ${PORT} · Meta API ${meta.configured() ? 'configurada' : 'NÃO configurada'}`);
   // Avisos de configuração no log da hospedagem (o site público funciona mesmo assim)
   if (!built()) console.warn('AVISO: pasta dist/ não encontrada. Rode "npm run build".');

@@ -8,8 +8,8 @@
   },
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
-    "postinstall": "vite build",
+    "build": "vite build && vite build -c vite.server.config.js",
+    "postinstall": "npm run build",
     "preview": "vite preview --host 0.0.0.0",
     "test": "node --experimental-strip-types --test tests/*.test.mjs",
     "start": "node server.js",
@@ -26,6 +26,7 @@
     "jszip": "3.10.1",
     "lucide-react": "1.31.0",
     "motion": "12.43.0",
+    "puppeteer-core": "23.11.1",
     "radix-ui": "1.6.7",
     "react": "19.2.6",
     "react-dom": "19.2.6",
@@ -42,5 +43,8 @@
     "@types/react-dom": "19.2.3",
     "typescript": "5.9.3"
   },
-  "main": "server.js"
+  "main": "server.js",
+  "optionalDependencies": {
+    "@sparticuz/chromium": "131.0.1"
+  }
 }

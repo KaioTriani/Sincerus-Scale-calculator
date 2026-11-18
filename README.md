@@ -113,3 +113,41 @@ Os antigos `components/CampaignWheel.tsx`, `lib/campaign*.ts` e `roleta/main.tsx
 Mantém a calculadora, modal próprio de cashback e WhatsApp. Os nomes financeiros são **Lucro bruto** e **Lucro líquido**, com as fórmulas originais preservadas: bruto = vendas estimadas × margem por aparelho; líquido = bruto − investimento em anúncios; ROAS do modelo = bruto ÷ investimento. Outras despesas não são descontadas automaticamente.
 
 WhatsApp comercial: +55 (83) 99905-4165.
+
+## Envios automáticos pelo WhatsApp (ViaZapi / Chatwoot)
+
+| Rotina | Quando (Brasília) | O que envia |
+|---|---|---|
+| `daily` | Todo dia, 8h | Resumo: saldos pré-pagos + todos os alertas abertos |
+| `alerts` | A cada 30 min, 7h–23h | Só alertas novos: sem saldo/saldo baixo, pagamento pendente/carência, anúncio reprovado ou com erro, duplicado, campanha ativa sem entrega, frequência alta |
+| `weekly` | Segunda, 8h | PDF "Relatório para cliente" (últimos 7 dias × 7 anteriores) de todos os clientes + PDF de anúncios ativos |
+| `monthly` | Dia 1º, 8h | PDF do relatório interno de desempenho do mês anterior, todos os clientes |
+
+Os PDFs são gerados no servidor com Chrome sem tela (`puppeteer-core` + `@sparticuz/chromium` na Hostinger). Os geradores de relatório são empacotados em `dist-server/reports.mjs` pelo `npm run build`.
+
+### Variáveis de ambiente
+
+| Variável | Exemplo | Para quê |
+|---|---|---|
+| `JOBS_ENABLED` | `1` | Liga as rotinas |
+| `REPORT_PHONES` | `+5583900000000,+5583911111111` | Quem recebe |
+| `VIAZAPI_BASE_URL` | `https://chat.viazapi.tech` | Chatwoot do ViaZapi |
+| `VIAZAPI_TOKEN` | (Perfil → Token de acesso) | API do Chatwoot |
+| `VIAZAPI_ACCOUNT_ID` / `VIAZAPI_INBOX_ID` | `1` / `4` | Conta e caixa do WhatsApp |
+| `PUBLIC_URL` | `https://sincerusscale.com.br` | Link público temporário do PDF (exigido pelo modelo da Meta) |
+| `WA_TEMPLATE_REPORT` | `relatorio_sincerus` | Modelo aprovado com **documento no cabeçalho**; corpo `{{1}}` nome, `{{2}}` relatório, `{{3}}` período |
+| `WA_TEMPLATE_ALERT` | `alerta_sincerus` | Modelo aprovado de texto; corpo `{{1}}` = resumo em uma linha |
+| `JOB_SECRET` | texto aleatório (24+ caracteres) | Protege `/api/jobs/run` |
+| `REPORT_EXCLUDE` | `DS AUTOS,VIAZAPI,Zion,Kaio Triani` | Contas fora dos envios (nome ou ID) |
+
+Regra da Meta: mensagem livre só é entregue se a pessoa escreveu para o número nas últimas 24h; fora disso, o sistema usa os modelos acima.
+
+### Cron da Hostinger (garante que rode mesmo se o processo dormir)
+
+hPanel → Avançado → Cron Jobs, a cada 5 minutos:
+
+```
+curl -s "https://sincerusscale.com.br/api/jobs/run?job=tick&key=SEU_JOB_SECRET" > /dev/null
+```
+
+O `tick` só roda o que está no horário e nunca repete um envio. Para testar sem enviar: `/api/jobs/run?job=weekly&dry=1&key=...` (gera os PDFs em `server/data/`).
