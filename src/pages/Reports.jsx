@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   FileUp, FileText, FileSpreadsheet, Plus, Trash2, ChevronDown, Landmark, AlertTriangle, CheckCircle2,
-  X, Printer, Loader2, RotateCcw, Info, Search, Check, Building2, CalendarClock, Megaphone, Send,
+  X, Printer, Loader2, RotateCcw, Info, Search, Check, Building2, CalendarClock, Megaphone, Send, Wallet,
 } from 'lucide-react';
 import Reveal from '../components/Reveal';
 import Button from '../components/Button';
@@ -14,6 +14,7 @@ import { listClients, addClient, loadClientCampaigns, saveCampaigns, setClientCu
 import { metaAvailable } from '../lib/api';
 import ActiveAdsPanel from '../components/ActiveAdsPanel';
 import ClientReportPanel from '../components/ClientReportPanel';
+import BalancesPanel from '../components/BalancesPanel';
 
 const DRAFT_KEY = 'sincerus.report.draft.v2';
 const uid = () => Math.random().toString(36).slice(2, 9);
@@ -347,6 +348,7 @@ export default function Reports() {
   const lastRows = useRef(null);
   const [activeOpen, setActiveOpen] = useState(false);
   const [clientOpen, setClientOpen] = useState(false);
+  const [balOpen, setBalOpen] = useState(false);
   const [metaOn, setMetaOn] = useState(false);
   useEffect(() => { metaAvailable().then((s) => setMetaOn(!!s.configured)).catch(() => setMetaOn(false)); }, []);
 
@@ -476,10 +478,12 @@ export default function Reports() {
         </div>
         <div className="flex flex-wrap gap-2">
           {metaOn && <Button onClick={() => setClientOpen(true)} icon={Send}>Relatório para cliente</Button>}
+          {metaOn && <Button variant="ghost" onClick={() => setBalOpen(true)} icon={Wallet}>Saldos</Button>}
           {metaOn && <Button variant="ghost" onClick={() => setActiveOpen(true)} icon={Megaphone}>Anúncios ativos <span className="ml-1 text-[10px] font-normal uppercase tracking-wider text-white/45">interno</span></Button>}
           <button onClick={() => { if (confirm('Limpar o rascunho atual?')) { setDraft(EMPTY()); setConfirmed(false); } }} className="chip"><RotateCcw className="h-3.5 w-3.5" /> Novo</button>
         </div>
       </Reveal>
+      <BalancesPanel open={balOpen} onClose={() => setBalOpen(false)} />
       <ClientReportPanel open={clientOpen} onClose={() => setClientOpen(false)} onPreview={({ html, fileName }) => setPreview({ html, fileName })} initialClient={/^act_d+$/.test(draft.clientId || '') ? draft.clientId : ''} />
       <ActiveAdsPanel
         open={activeOpen}

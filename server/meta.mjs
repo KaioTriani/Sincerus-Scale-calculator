@@ -325,3 +325,28 @@ export function clientReport(account, since, until, cmpSince, cmpUntil, refresh)
     };
   }, refresh);
 }
+
+// ---------- Saldos e pagamento das contas (somente leitura) ----------
+// Pré-pagas: saldo disponível (texto da forma de pagamento). Cartão: valor acumulado a cobrar (balance).
+const parseMoney = (s) => { const m = String(s || '').match(/([\d.]+,\d{2})/); return m ? Number(m[1].replace(/\./g, '').replace(',', '.')) : null; };
+export function balances(refresh) {
+  return cached('balances', async () => {
+    const list = await graph('me/adaccounts', { fields: 'name,account_id,currency,account_status,disable_reason,balance,amount_spent,spend_cap,is_prepay_account,funding_source_details,business_name', limit: '200' });
+    const rows = list.map((a) => {
+      const fs = a.funding_source_details || null;
+      const prepay = !!a.is_prepay_account || fs?.type === 20;
+      const card = fs?.display_string && !/saldo/i.test(fs.display_string) ? fs.display_string : null;
+      const cap = Number(a.spend_cap || 0) / 100;
+      return {
+        id: a.id, name: a.name, currency: a.currency, statusCode: a.account_status, status: ACCOUNT_STATUS[a.account_status] || String(a.account_status),
+        business: a.business_name || '', prepay,
+        available: prepay ? parseMoney(fs?.display_string) : null, // saldo disponível (pré-paga)
+        due: Number(a.balance || 0) / 100, // valor acumulado ainda não cobrado (cartão) / devido
+        spent: Number(a.amount_spent || 0) / 100, spendCap: cap || null, capLeft: cap ? Math.max(0, cap - Number(a.amount_spent || 0) / 100) : null,
+        payment: prepay ? 'Saldo pré-pago' : card ? card.replace(/^(\w+)\s*\*(\d{4})$/, (_, b, d) => `${b} final ${d}`) : 'Sem forma de pagamento',
+        used: Number(a.amount_spent || 0) > 0,
+      };
+    }).sort((x, y) => x.name.localeCompare(y.name, 'pt-BR'));
+    return { fetchedAt: new Date().toISOString(), accounts: rows };
+  }, refresh);
+}

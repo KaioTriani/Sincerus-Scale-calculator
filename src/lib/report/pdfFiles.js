@@ -50,8 +50,17 @@ export async function htmlToPdfBlob(html) {
     for (const [i, p] of pages.entries()) {
       p.style.margin = '0'; p.style.boxShadow = 'none';
       const canvas = await html2canvas(p, { scale: 2, backgroundColor: '#ffffff', useCORS: true, windowWidth: A4.w, windowHeight: A4.h, logging: false });
-      if (i) pdf.addPage('a4', 'portrait');
-      pdf.addImage(canvas.toDataURL('image/jpeg', 0.92), 'JPEG', 0, 0, 210, 297, undefined, 'FAST');
+      // seção mais alta que uma folha A4: fatia em várias páginas (sem esticar)
+      const sliceH = Math.round((canvas.width * 297) / 210);
+      for (let y = 0, k = 0; y < canvas.height - 4; y += sliceH, k++) {
+        const part = document.createElement('canvas');
+        part.width = canvas.width; part.height = Math.min(sliceH, canvas.height - y);
+        const ctx = part.getContext('2d');
+        ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, part.width, part.height);
+        ctx.drawImage(canvas, 0, y, canvas.width, part.height, 0, 0, canvas.width, part.height);
+        if (i || k) pdf.addPage('a4', 'portrait');
+        pdf.addImage(part.toDataURL('image/jpeg', 0.92), 'JPEG', 0, 0, 210, (part.height * 210) / canvas.width, undefined, 'FAST');
+      }
     }
     return pdf.output('blob');
   } finally { f.remove(); }
