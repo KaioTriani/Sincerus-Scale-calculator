@@ -51,7 +51,9 @@ async function launch() {
   fs.mkdirSync(home, { recursive: true });
   try { if (fs.existsSync(fontsDir) && !fs.existsSync(path.join(home, '.fonts'))) fs.symlinkSync(fontsDir, path.join(home, '.fonts')); } catch { /* segue sem as fontes extras */ }
   return puppeteer.launch({
-    executablePath, headless: true, args: chromium.args, defaultViewport: chromium.defaultViewport,
+    // binário "headless shell" do @sparticuz; pipe em vez de porta TCP (a hospedagem pode recusar a conexão local)
+    executablePath, headless: 'shell', pipe: true, args: chromium.args.filter((a) => !a.startsWith('--headless')), defaultViewport: chromium.defaultViewport,
+    protocolTimeout: 120000,
     env: { ...process.env, HOME: home, LD_LIBRARY_PATH: [PRIVATE, process.env.LD_LIBRARY_PATH].filter(Boolean).join(':') },
   });
 }
