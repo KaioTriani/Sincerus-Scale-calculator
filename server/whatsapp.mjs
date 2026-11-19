@@ -73,19 +73,30 @@ async function windowOpen(convId) {
 }
 
 // ---------- envio ----------
-// texto: mensagem livre; fora da janela, modelo de alerta com o texto numa linha (a Meta não aceita quebra de linha em parâmetros)
-export async function sendText(phone, text, { templateBody } = {}) {
+// texto: mensagem livre; fora da janela, modelo aprovado (a Meta não aceita quebra de linha em parâmetros):
+//  - WA_TEMPLATE_DIGEST (se houver): "Diário Sincerus - Resumo ({{1}})" + "Informações importantes" + {{2}} = lista numa linha
+//  - senão WA_TEMPLATE_ALERT: {{1}} = resumo numa linha
+export async function sendText(phone, text, { templateBody, digest } = {}) {
   const conv = await conversationFor(phone);
   if (await windowOpen(conv)) {
     await cw(`/accounts/${ACCOUNT()}/conversations/${conv}/messages`, { method: 'POST', json: { content: text, message_type: 'outgoing' } });
     return 'texto';
   }
-  const tpl = env('WA_TEMPLATE_ALERT');
+  const oneLine = (s, max = 1000) => String(s).replace(/\s*\n+\s*/g, ' · ').replace(/\s{2,}/g, ' ').slice(0, max);
+  const useDigest = digest && env('WA_TEMPLATE_DIGEST');
+  const tpl = useDigest ? env('WA_TEMPLATE_DIGEST') : env('WA_TEMPLATE_ALERT');
   if (!tpl) throw new Error('janela de 24h fechada e WA_TEMPLATE_ALERT não configurado');
-  const oneLine = (s) => String(s).replace(/\s*\n+\s*/g, ' · ').replace(/\s{2,}/g, ' ').slice(0, 1000);
+  let body;
+  if (useDigest) {
+    // lista "Cliente - Info | Cliente - Info" cortada para caber no limite do modelo
+    const parts = []; let size = 0;
+    for (const l of digest.lines) { if (size + l.length > 760) break; parts.push(l); size += l.length + 3; }
+    const rest = digest.lines.length - parts.length;
+    body = { 1: oneLine(digest.type, 60), 2: oneLine(parts.join(' | ') + (rest ? ` | e mais ${rest}` : '') || 'Nenhum alerta aberto') };
+  } else body = { 1: oneLine(templateBody || text) };
   await cw(`/accounts/${ACCOUNT()}/conversations/${conv}/messages`, {
     method: 'POST',
-    json: { content: oneLine(text), message_type: 'outgoing', template_params: { name: tpl, category: env('WA_TEMPLATE_ALERT_CATEGORY', 'MARKETING'), language: env('WA_TEMPLATE_ALERT_LANG', 'pt_BR'), processed_params: { body: { 1: oneLine(templateBody || text) } } } },
+    json: { content: oneLine(text), message_type: 'outgoing', template_params: { name: tpl, category: env(useDigest ? 'WA_TEMPLATE_DIGEST_CATEGORY' : 'WA_TEMPLATE_ALERT_CATEGORY', 'MARKETING'), language: env('WA_TEMPLATE_ALERT_LANG', 'pt_BR'), processed_params: { body } } },
   });
   return 'modelo';
 }

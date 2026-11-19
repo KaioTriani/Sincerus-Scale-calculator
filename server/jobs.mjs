@@ -130,24 +130,39 @@ export async function collectAlerts() {
     const c = R.classifyBalance(a);
     if (c.level === 'crit' || c.level === 'warn') {
       const val = a.prepay ? ` (saldo ${a.currency === 'USD' ? 'US$' : 'R$'} ${(a.available ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})` : '';
-      out.push({ key: `bal:${a.id}:${c.note}`, client: a.name, level: c.level, kind: 'saldo/pagamento', text: `${c.note}${val}` });
+      out.push({ key: `bal:${a.id}:${c.note}`, client: a.name, level: c.level, kind: 'saldo/pagamento', text: `${c.note}${val}`, info: `${c.note.split(' — ')[0]}${val.replace(' (saldo ', ' (')}` });
     }
   }
   const accs = (await meta.accounts()).filter((a) => a.active && !excluded(a));
   const health = await pool(accs, 4, async (a) => { try { return (await meta.adHealth(a.id, true)).map((x) => ({ ...x, client: a.name })); } catch { return []; } });
   for (const x of health.flat()) {
-    out.push({ key: `ad:${x.key}`, client: x.client, level: x.kind === 'reprovado' || x.kind === 'erro' ? 'crit' : 'warn', kind: x.kind, text: `${x.ad ? `"${x.ad}" — ` : x.campaign ? `${x.campaign} — ` : ''}${x.detail}` });
+    out.push({ key: `ad:${x.key}`, client: x.client, level: x.kind === 'reprovado' || x.kind === 'erro' ? 'crit' : 'warn', kind: x.kind, text: `${x.ad ? `"${x.ad}" — ` : x.campaign ? `${x.campaign} — ` : ''}${x.detail}`, info: shortInfo(x) });
   }
   return out;
 }
-const ICON = { crit: '🔴', warn: '🟡' };
-function formatAlerts(list, title) {
-  const by = new Map();
-  for (const a of list) { if (!by.has(a.client)) by.set(a.client, []); by.get(a.client).push(a); }
-  const blocks = [...by].sort(([x], [y]) => x.localeCompare(y, 'pt-BR')).map(([client, items]) => `*${client}*\n${items.map((a) => `${ICON[a.level]} ${a.kind}: ${a.text}`).join('\n')}`);
-  return `*${title}*\n\n${blocks.join('\n\n')}`;
+// ---------- formato da mensagem ----------
+// *Diário Sincerus - Resumo (Tipo de aviso)*
+// *Informações importantes*
+// Cliente - Info
+const cut = (s, n) => { const t = String(s || '').replace(/\s+/g, ' ').trim(); return t.length > n ? `${t.slice(0, n - 1).trim()}…` : t; };
+function shortInfo(x) {
+  if (x.kind === 'baixo alcance') return x.campaign ? `Campanha "${cut(x.campaign, 40)}" sem entrega ontem` : `${cut(x.detail.split(' — ')[0], 70)} — verificar restrição da Página`;
+  if (x.kind === 'frequência alta') return `Frequência alta (${x.detail.replace(/^Frequência de /, '')})`;
+  const label = { reprovado: 'Anúncio reprovado', erro: 'Anúncio com erro', duplicado: 'Anúncio duplicado' }[x.kind] || x.kind;
+  return `${label}: "${cut(x.ad, 40)}"`;
 }
-const oneLine = (list) => list.slice(0, 8).map((a) => `${a.client}: ${a.kind}`).join('; ') + (list.length > 8 ? `; e mais ${list.length - 8}` : '');
+const TYPE = { 'saldo/pagamento': 'Saldos', reprovado: 'Anúncios', erro: 'Anúncios', duplicado: 'Anúncios', 'baixo alcance': 'Entrega', 'frequência alta': 'Entrega' };
+const typeOf = (list) => { const t = [...new Set(list.map((a) => TYPE[a.kind] || 'Alertas'))]; if (!t.length) return 'Sem alertas'; return t.length === 1 ? t[0] : `${t.slice(0, -1).join(', ')} e ${t[t.length - 1]}`; };
+// por tipo (saldos, anúncios, entrega), mais grave primeiro e depois por cliente
+const GROUP = ['Saldos', 'Anúncios', 'Entrega'];
+const order = (list) => [...list].sort((a, b) => (GROUP.indexOf(TYPE[a.kind]) - GROUP.indexOf(TYPE[b.kind])) || (a.level === b.level ? 0 : a.level === 'crit' ? -1 : 1) || friendly(a.client).localeCompare(friendly(b.client), 'pt-BR'));
+const lines = (list) => order(list).map((a) => `${friendly(a.client)} - ${a.info || a.text}`);
+function message(kind, list) {
+  const type = typeOf(list);
+  const body = list.length ? lines(list).join('\n') : 'Nenhum alerta aberto. Tudo certo com as contas ✅';
+  return { text: `*Diário Sincerus - ${kind} (${type})*\n\n*Informações importantes*\n\n${body}`, digest: { type: kind === 'Resumo' ? type : `Alerta: ${type}`, lines: lines(list) } };
+}
+const oneLine = (list) => list.slice(0, 8).map((a) => `${friendly(a.client)}: ${a.kind}`).join('; ') + (list.length > 8 ? `; e mais ${list.length - 8}` : '');
 
 // a cada 30 min: só o que é novo desde o último envio
 export async function alerts({ dry = false } = {}) {
@@ -156,10 +171,10 @@ export async function alerts({ dry = false } = {}) {
   const fresh = now.filter((a) => !state.alerts[a.key]);
   const out = { open: now.length, new: fresh.length };
   if (fresh.length && !dry) {
-    const text = formatAlerts(fresh, `⚠️ ${fresh.length} novo(s) alerta(s) · Sincerus Scale`);
-    out.sent = await broadcast((phone) => sendText(phone, text, { templateBody: `${fresh.length} novo(s) alerta(s): ${oneLine(fresh)}` }));
+    const { text, digest } = message('Alerta', fresh);
+    out.sent = await broadcast((phone) => sendText(phone, text, { digest, templateBody: `${fresh.length} novo(s) alerta(s): ${oneLine(fresh)}` }));
   }
-  if (dry) out.preview = fresh.length ? formatAlerts(fresh, `⚠️ ${fresh.length} novo(s) alerta(s)`) : '';
+  if (dry) out.preview = fresh.length ? message('Alerta', fresh).text : '';
   if (!dry) {
     const keep = Object.fromEntries(now.map((a) => [a.key, state.alerts[a.key] || new Date().toISOString()])); // resolvidos saem do estado
     writeState({ ...readState(), alerts: keep });
@@ -169,15 +184,10 @@ export async function alerts({ dry = false } = {}) {
 
 // todo dia 8h: resumo completo (saldos + todos os alertas abertos)
 export async function daily({ dry = false } = {}) {
-  const R = await reports();
-  const bal = await meta.balances(true);
-  const accs = bal.accounts.filter((a) => !excluded(a)).map((a) => ({ ...a, ...R.classifyBalance(a) })).filter((a) => a.level !== 'idle');
-  const prepaid = accs.filter((a) => a.prepay).map((a) => `• ${a.name}: ${a.currency === 'USD' ? 'US$' : 'R$'} ${(a.available ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`).join('\n');
   const now = await collectAlerts();
-  const { date } = nowBR();
-  const text = `*Bom dia! Resumo Sincerus Scale · ${dm(date)}*\n\n*Saldos pré-pagos*\n${prepaid || '—'}\n\n${now.length ? formatAlerts(now, `Alertas abertos (${now.length})`) : '✅ Nenhum alerta aberto.'}`;
+  const { text, digest } = message('Resumo', now);
   if (dry) return { preview: text };
-  const sent = await broadcast((phone) => sendText(phone, text, { templateBody: `Resumo do dia: ${now.length} alerta(s) aberto(s)${now.length ? ` — ${oneLine(now)}` : ''}.` }));
+  const sent = await broadcast((phone) => sendText(phone, text, { digest, templateBody: `Resumo do dia: ${now.length} alerta(s) aberto(s)${now.length ? ` — ${oneLine(now)}` : ''}.` }));
   // o resumo também vale como "já avisado" para os alertas atuais
   writeState({ ...readState(), alerts: Object.fromEntries(now.map((a) => [a.key, new Date().toISOString()])) });
   return { alerts: now.length, sent };
