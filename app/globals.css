@@ -38,3 +38,8 @@
 }
 @media(max-width:480px){.header{padding:0 16px;gap:12px}.header nav{gap:8px}.contact{font-size:0;gap:0;padding:8px}.contact svg:last-child{display:none}.intro h1{font-size:clamp(34px,10vw,42px)}.eyebrow{font-size:10px;letter-spacing:1.2px}.presets button{min-width:0;padding:8px 5px;font-size:12px}}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;transition-duration:.01ms!important;scroll-behavior:auto!important}}
+/* Botão de retorno ao site principal (/) */
+.back-site{display:inline-flex;align-items:center;gap:8px;font-size:13px;color:#f8f8f8;border:1px solid rgb(248 248 248 / .22);border-radius:999px;padding:9px 14px;min-height:40px;white-space:nowrap;transition:border-color .2s,background .2s,color .2s}
+.back-site:hover{border-color:#f76001;background:rgb(247 96 1 / .12);color:#fff}
+.back-site svg{color:#f76001}
+@media(max-width:480px){.back-site{padding:9px 11px}.back-site>span{display:none}}
