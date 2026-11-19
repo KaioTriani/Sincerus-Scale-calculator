@@ -357,7 +357,7 @@ export function adHealth(account, refresh) {
   if (!/^act_\d+$/.test(account)) throw Object.assign(new Error('Conta inválida.'), { status: 400 });
   return cached(`health:${account}`, async () => {
     const [ads, yday, freq] = await Promise.all([
-      graph(`${account}/ads`, { fields: 'id,name,effective_status,configured_status,adset_id,campaign_id,creative{id},issues_info,ad_review_feedback,adset{name,effective_status},campaign{name,effective_status,start_time}', limit: '500',
+      graph(`${account}/ads`, { fields: 'id,name,effective_status,configured_status,adset_id,campaign_id,creative{id},issues_info,ad_review_feedback,adset{name,effective_status,end_time},campaign{name,effective_status,start_time}', limit: '500',
         effective_status: JSON.stringify(['ACTIVE', 'DISAPPROVED', 'WITH_ISSUES', 'PENDING_REVIEW', 'IN_PROCESS']) }),
       graph(`${account}/insights`, { level: 'ad', date_preset: 'yesterday', fields: 'ad_id,impressions,reach,spend', limit: '500' }),
       graph(`${account}/insights`, { level: 'adset', date_preset: 'last_7d', fields: 'adset_id,adset_name,frequency,impressions', limit: '500' }),
@@ -368,7 +368,7 @@ export function adHealth(account, refresh) {
       if (a.effective_status === 'DISAPPROVED' && a.configured_status === 'ACTIVE') {
         const why = Object.values(a.ad_review_feedback?.global || {})[0] || '';
         issues.push({ kind: 'reprovado', key: `rep:${a.id}`, ad: a.name, campaign: a.campaign?.name, detail: why ? String(why).slice(0, 140) : 'Anúncio reprovado pela Meta' });
-      } else if (a.effective_status === 'WITH_ISSUES') {
+      } else if (a.effective_status === 'WITH_ISSUES' && a.configured_status === 'ACTIVE') {
         const why = a.issues_info?.[0]?.error_summary || a.issues_info?.[0]?.error_message || 'Anúncio com problema de veiculação';
         issues.push({ kind: 'erro', key: `err:${a.id}`, ad: a.name, campaign: a.campaign?.name, detail: String(why).slice(0, 140) });
       }
@@ -389,11 +389,18 @@ export function adHealth(account, refresh) {
     for (const a of ads.filter((x) => x.effective_status === 'ACTIVE' && live(x))) {
       // campanha que começou ontem ou hoje ainda não teve um dia inteiro para entregar
       if (a.campaign?.start_time && Date.now() - new Date(a.campaign.start_time).getTime() < 2 * 86400000) continue;
+      // conjunto com data de término já passada (ex.: impulsionamento antigo) não conta
+      if (a.adset?.end_time && new Date(a.adset.end_time).getTime() < Date.now()) continue;
       const c = byCamp.get(a.campaign_id) || { name: a.campaign?.name, imp: 0, ads: 0 };
       c.imp += imp.get(a.id) || 0; c.ads += 1; byCamp.set(a.campaign_id, c);
     }
-    for (const [id, c] of byCamp) {
-      if (c.imp < 300) issues.push({ kind: 'baixo alcance', key: `low:${id}`, ad: '', campaign: c.name, detail: c.imp ? `Campanha ativa com só ${c.imp} impressões ontem (${c.ads} anúncios)` : `Campanha ativa sem nenhuma impressão ontem (${c.ads} anúncios)` });
+    const low = [...byCamp].filter(([, c]) => c.imp < 300);
+    // muitas campanhas paradas na mesma conta costuma ser Página/conta restrita: vira um alerta só
+    if (low.length > 5) {
+      const zero = low.filter(([, c]) => !c.imp).length;
+      issues.push({ kind: 'baixo alcance', key: `low-many:${account}`, ad: '', campaign: '', detail: `${low.length} campanhas ativas sem entrega ontem (${zero} com zero impressões) — verifique se a Página ou a conta está restrita` });
+    } else for (const [id, c] of low) {
+      issues.push({ kind: 'baixo alcance', key: `low:${id}`, ad: '', campaign: c.name, detail: c.imp ? `Campanha ativa com só ${c.imp} impressões ontem (${c.ads} anúncios)` : `Campanha ativa sem nenhuma impressão ontem (${c.ads} anúncios)` });
     }
     // frequência alta nos últimos 7 dias (conjunto)
     for (const s of freq) {

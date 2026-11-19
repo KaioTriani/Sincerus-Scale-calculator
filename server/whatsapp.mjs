@@ -85,7 +85,7 @@ export async function sendText(phone, text, { templateBody } = {}) {
   const oneLine = (s) => String(s).replace(/\s*\n+\s*/g, ' · ').replace(/\s{2,}/g, ' ').slice(0, 1000);
   await cw(`/accounts/${ACCOUNT()}/conversations/${conv}/messages`, {
     method: 'POST',
-    json: { content: oneLine(text), message_type: 'outgoing', template_params: { name: tpl, category: 'UTILITY', language: env('WA_TEMPLATE_ALERT_LANG', 'pt_BR'), processed_params: { body: { 1: oneLine(templateBody || text) } } } },
+    json: { content: oneLine(text), message_type: 'outgoing', template_params: { name: tpl, category: env('WA_TEMPLATE_ALERT_CATEGORY', 'MARKETING'), language: env('WA_TEMPLATE_ALERT_LANG', 'pt_BR'), processed_params: { body: { 1: oneLine(templateBody || text) } } } },
   });
   return 'modelo';
 }
@@ -107,7 +107,7 @@ export async function sendDocument(phone, buffer, fileName, caption, { name = ''
   if (!url) throw new Error('PUBLIC_URL não configurado (o modelo precisa de um link público para o PDF)');
   await cw(`/accounts/${ACCOUNT()}/conversations/${conv}/messages`, {
     method: 'POST',
-    json: { content: caption, message_type: 'outgoing', template_params: { name: tpl, category: 'UTILITY', language: env('WA_TEMPLATE_REPORT_LANG', 'pt_BR'), processed_params: { body: { 1: name || 'equipe', 2: title, 3: period }, header: { media_url: url, media_type: 'document' } } } },
+    json: { content: caption, message_type: 'outgoing', template_params: { name: tpl, category: env('WA_TEMPLATE_REPORT_CATEGORY', 'MARKETING'), language: env('WA_TEMPLATE_REPORT_LANG', 'pt_BR'), processed_params: { body: { 1: name || 'equipe', 2: title, 3: period }, header: { media_url: url, media_type: 'document' } } } },
   });
   return 'modelo';
 }
