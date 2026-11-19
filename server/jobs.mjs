@@ -211,15 +211,24 @@ export async function runJob(name, opts = {}) {
 
 // Verifica o que está no horário e roda (sem repetir): usado a cada minuto pelo agendador interno
 // e pelo Cron da Hostinger (/api/jobs/run?job=tick&key=...), caso o processo durma sem visitas.
+// o cron da Hostinger e o relógio interno chamam o tick; só um roda por vez
+let ticking = false;
 export async function tick() {
   if (process.env.JOBS_ENABLED !== '1') return { off: true };
+  if (ticking) return { busy: true };
+  ticking = true;
+  try { return await tickOnce(); } finally { ticking = false; }
+}
+async function tickOnce() {
   const { date, hour, weekday } = nowBR();
   const st = readState();
   const due = [];
   if (hour >= 8 && st.lastDaily !== date) due.push(['daily', 'lastDaily', date]);
   if (weekday === 'Mon' && hour >= 8 && st.lastWeekly !== isoWeek(date)) due.push(['weekly', 'lastWeekly', isoWeek(date)]);
   if (date.endsWith('-01') && hour >= 8 && st.lastMonthly !== date.slice(0, 7)) due.push(['monthly', 'lastMonthly', date.slice(0, 7)]);
-  if (hour >= 7 && hour <= 23 && Date.now() - (st.lastAlertsAt || 0) >= 28 * 60000) due.push(['alerts', 'lastAlertsAt', Date.now()]);
+  // o resumo do dia já inclui todos os alertas: nesse caso não manda alerta em seguida
+  if (due.some(([j]) => j === 'daily')) writeState({ ...readState(), lastAlertsAt: Date.now() });
+  else if (hour >= 7 && hour <= 23 && Date.now() - (st.lastAlertsAt || 0) >= 28 * 60000) due.push(['alerts', 'lastAlertsAt', Date.now()]);
   for (const [job, mark, value] of due) {
     writeState({ ...readState(), [mark]: value }); // marca antes, para não repetir se demorar
     try { await runJob(job); } catch { /* registrado no log */ }
