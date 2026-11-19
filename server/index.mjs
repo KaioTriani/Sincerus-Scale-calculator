@@ -39,7 +39,12 @@ async function api(req, res, url) {
       if (!user && !(key && key.length >= 24 && url.searchParams.get('key') === key)) return send(401, { error: 'Não autorizado.' });
       const job = url.searchParams.get('job') || '';
       const dry = url.searchParams.get('dry') === '1';
-      if (dry) return send(200, await runJob(job, { dry: true }));
+      if (dry) {
+        // no teste, devolve o detalhe do erro (onde falhou) para diagnóstico
+        try { return send(200, await runJob(job, { dry: true })); } catch (e) {
+          return send(500, { error: e.message, code: e.code, syscall: e.syscall, path: e.path, stack: String(e.stack || '').split('\n').slice(0, 8) });
+        }
+      }
       runJob(job).catch(() => {}); // roda em segundo plano (pode levar minutos)
       return send(202, { started: job });
     }

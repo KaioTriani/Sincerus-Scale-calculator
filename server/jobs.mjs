@@ -3,15 +3,16 @@
 //  - monthly: todo dia 1º às 8h — relatório interno de desempenho do mês anterior, todos os clientes
 //  - daily:   todo dia às 8h — resumo de saldos e de todos os alertas abertos
 //  - alerts:  a cada 30 min (7h–23h) — só os alertas NOVOS (saldo, anúncio com erro/reprovado, duplicado, baixo alcance, frequência)
-// Envio pelo WhatsApp (ViaZapi/Chatwoot) para REPORT_PHONES. Estado (o que já foi enviado) em server/data/state.json.
+// Envio pelo WhatsApp (ViaZapi/Chatwoot) para REPORT_PHONES. Estado (o que já foi enviado) em DATA_DIR/state.json (fora da pasta do app em produção, ver paths.mjs).
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as meta from './meta.mjs';
 import { htmlToPdf } from './pdf.mjs';
 import { whatsappConfigured, recipients, sendText, sendDocument, broadcast } from './whatsapp.mjs';
+import { DATA_DIR } from './paths.mjs';
 
-const DATA = path.resolve(fileURLToPath(new URL('./data', import.meta.url)));
+const DATA = DATA_DIR;
 const STATE = path.join(DATA, 'state.json');
 const readState = () => { try { return JSON.parse(fs.readFileSync(STATE, 'utf8')); } catch { return { alerts: {} }; } };
 const writeState = (s) => { fs.mkdirSync(DATA, { recursive: true }); fs.writeFileSync(STATE, JSON.stringify(s, null, 1)); };
@@ -52,7 +53,7 @@ const mergeHtml = (docs) => {
 };
 async function sendPdf(html, fileName, caption, info, { dry } = {}) {
   const pdf = await htmlToPdf(html);
-  if (dry) { fs.mkdirSync(DATA, { recursive: true }); fs.writeFileSync(path.join(DATA, `${fileName}.pdf`), pdf); return { dry: true, bytes: pdf.length, file: `server/data/${fileName}.pdf` }; }
+  if (dry) { fs.mkdirSync(DATA, { recursive: true }); fs.writeFileSync(path.join(DATA, `${fileName}.pdf`), pdf); return { dry: true, bytes: pdf.length, file: path.join(DATA, `${fileName}.pdf`) }; }
   return { bytes: pdf.length, sent: await broadcast((phone) => sendDocument(phone, pdf, `${fileName}.pdf`, caption, info)) };
 }
 
@@ -216,11 +217,24 @@ let ticking = false;
 export async function tick() {
   if (process.env.JOBS_ENABLED !== '1') return { off: true };
   if (ticking) return { busy: true };
+  // trava em arquivo também: se a Hostinger rodar mais de um processo, só um executa (trava velha de 30 min é ignorada)
+  const lock = path.join(DATA, 'tick.lock');
+  try { if (Date.now() - fs.statSync(lock).mtimeMs > 30 * 60000) fs.rmSync(lock, { force: true }); } catch { /* sem trava */ }
+  let fd;
+  try { fd = fs.openSync(lock, 'wx'); } catch { return { busy: true }; }
   ticking = true;
-  try { return await tickOnce(); } finally { ticking = false; }
+  try { return await tickOnce(); } finally { ticking = false; fs.closeSync(fd); fs.rmSync(lock, { force: true }); }
 }
 async function tickOnce() {
   const { date, hour, weekday } = nowBR();
+  // primeira execução numa pasta de dados nova (ex.: servidor novo): considera o que já passou de hoje como enviado
+  // e só registra os alertas atuais, sem mandar nada — evita repetir envios que já saíram
+  if (!fs.existsSync(STATE)) {
+    const now = await collectAlerts().catch(() => []);
+    writeState({ lastDaily: hour >= 8 ? date : null, lastWeekly: weekday === 'Mon' && hour >= 8 ? isoWeek(date) : null, lastMonthly: date.endsWith('-01') && hour >= 8 ? date.slice(0, 7) : null, lastAlertsAt: Date.now(), alerts: Object.fromEntries(now.map((a) => [a.key, new Date().toISOString()])) });
+    console.log('Rotinas: estado novo criado (nada enviado nesta primeira execução).');
+    return { ran: [], seeded: true };
+  }
   const st = readState();
   const due = [];
   if (hour >= 8 && st.lastDaily !== date) due.push(['daily', 'lastDaily', date]);
@@ -240,6 +254,6 @@ JOBS.tick = tick;
 export function startScheduler() {
   if (process.env.JOBS_ENABLED !== '1') { console.log('Rotinas automáticas desligadas (JOBS_ENABLED≠1).'); return; }
   if (!whatsappConfigured() || !recipients().length) { console.warn('AVISO: rotinas ligadas, mas ViaZapi/REPORT_PHONES não configurados.'); }
-  console.log(`Rotinas automáticas ligadas · destinatários: ${recipients().length}`);
+  console.log(`Rotinas automáticas ligadas · destinatários: ${recipients().length} · dados em ${DATA}`);
   setInterval(() => { tick().catch((e) => console.error('agendador:', e.message)); }, 60 * 1000);
 }

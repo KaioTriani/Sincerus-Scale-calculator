@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { DATA_DIR } from './paths.mjs';
 
 const CANDIDATES = [
   'C:/Program Files/Google/Chrome/Application/chrome.exe',
@@ -14,7 +15,7 @@ const CANDIDATES = [
   '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
   '/usr/bin/google-chrome', '/usr/bin/chromium', '/usr/bin/chromium-browser',
 ];
-const PRIVATE = path.resolve(fileURLToPath(new URL('./data/chromium', import.meta.url)));
+const PRIVATE = path.join(DATA_DIR, 'chromium');
 
 let exePromise = null; // uma extração só, compartilhada por quem pedir ao mesmo tempo
 async function extractChromium() {

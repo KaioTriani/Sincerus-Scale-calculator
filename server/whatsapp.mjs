@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { DATA_DIR } from './paths.mjs';
 
 const env = (k, d = '') => process.env[k] || d;
 export const whatsappConfigured = () => !!(env('VIAZAPI_TOKEN') && env('VIAZAPI_BASE_URL'));
@@ -26,7 +27,7 @@ async function cw(p, { method = 'GET', json, form } = {}) {
 }
 
 // ---------- arquivos públicos temporários (o modelo da Meta precisa de um link para o PDF) ----------
-const FILES = path.resolve(fileURLToPath(new URL('./data/files', import.meta.url)));
+const FILES = path.join(DATA_DIR, 'files');
 export function publishFile(buffer, fileName) {
   fs.mkdirSync(FILES, { recursive: true });
   const id = crypto.randomBytes(16).toString('hex');
