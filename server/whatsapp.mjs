@@ -74,7 +74,7 @@ async function windowOpen(convId) {
 
 // ---------- envio ----------
 // texto: mensagem livre; fora da janela, modelo aprovado (a Meta não aceita quebra de linha em parâmetros):
-//  - WA_TEMPLATE_DIGEST (se houver): "Diário Sincerus - Resumo ({{1}})" + "Informações importantes" + {{2}} = lista numa linha
+//  - WA_TEMPLATE_DIGEST (prefixo, se houver): "Diário Sincerus - Resumo ({{1}})" + "Informações importantes" + {{2}}…{{11}}, um cliente por linha
 //  - senão WA_TEMPLATE_ALERT: {{1}} = resumo numa linha
 export async function sendText(phone, text, { templateBody, digest } = {}) {
   const conv = await conversationFor(phone);
@@ -84,19 +84,22 @@ export async function sendText(phone, text, { templateBody, digest } = {}) {
   }
   const oneLine = (s, max = 1000) => String(s).replace(/\s*\n+\s*/g, ' · ').replace(/\s{2,}/g, ' ').slice(0, max);
   const useDigest = digest && env('WA_TEMPLATE_DIGEST');
-  const tpl = useDigest ? env('WA_TEMPLATE_DIGEST') : env('WA_TEMPLATE_ALERT');
-  if (!tpl) throw new Error('janela de 24h fechada e WA_TEMPLATE_ALERT não configurado');
-  let body;
+  let tpl, body;
   if (useDigest) {
-    // lista "Cliente - Info | Cliente - Info" cortada para caber no limite do modelo
-    const parts = []; let size = 0;
-    for (const l of digest.lines) { if (size + l.length > 760) break; parts.push(l); size += l.length + 3; }
-    const rest = digest.lines.length - parts.length;
-    body = { 1: oneLine(digest.type, 60), 2: oneLine(parts.join(' | ') + (rest ? ` | e mais ${rest}` : '') || 'Nenhum alerta aberto') };
-  } else body = { 1: oneLine(templateBody || text) };
+    // modelos <prefixo>_1 … <prefixo>_10: uma variável por linha ("Cliente - Info"); passando de 10, a última vira "e mais N"
+    const MAX = 10;
+    let list = digest.lines.length ? digest.lines.map((l) => oneLine(l, 200)) : ['Nenhum alerta aberto. Tudo certo com as contas'];
+    if (list.length > MAX) list = [...list.slice(0, MAX - 1), `E mais ${list.length - (MAX - 1)} aviso(s) — lista completa na plataforma`];
+    tpl = `${env('WA_TEMPLATE_DIGEST')}_${list.length}`;
+    body = { 1: oneLine(digest.type, 60), ...Object.fromEntries(list.map((l, i) => [i + 2, l])) };
+  } else {
+    tpl = env('WA_TEMPLATE_ALERT');
+    body = { 1: oneLine(templateBody || text) };
+  }
+  if (!tpl) throw new Error('janela de 24h fechada e WA_TEMPLATE_ALERT não configurado');
   await cw(`/accounts/${ACCOUNT()}/conversations/${conv}/messages`, {
     method: 'POST',
-    json: { content: oneLine(text), message_type: 'outgoing', template_params: { name: tpl, category: env(useDigest ? 'WA_TEMPLATE_DIGEST_CATEGORY' : 'WA_TEMPLATE_ALERT_CATEGORY', 'MARKETING'), language: env('WA_TEMPLATE_ALERT_LANG', 'pt_BR'), processed_params: { body } } },
+    json: { content: useDigest ? text : oneLine(text), message_type: 'outgoing', template_params: { name: tpl, category: env(useDigest ? 'WA_TEMPLATE_DIGEST_CATEGORY' : 'WA_TEMPLATE_ALERT_CATEGORY', 'MARKETING'), language: env('WA_TEMPLATE_ALERT_LANG', 'pt_BR'), processed_params: { body } } },
   });
   return 'modelo';
 }

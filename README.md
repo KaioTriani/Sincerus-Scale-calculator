@@ -137,7 +137,7 @@ Os PDFs são gerados no servidor com Chrome sem tela (`puppeteer-core` + `@spart
 | `PUBLIC_URL` | `https://sincerusscale.com.br` | Link público temporário do PDF (exigido pelo modelo da Meta) |
 | `WA_TEMPLATE_REPORT` | `relatorio_sincerus` | Modelo aprovado com **documento no cabeçalho**; corpo `{{1}}` nome, `{{2}}` relatório, `{{3}}` período |
 | `WA_TEMPLATE_ALERT` | `alerta_sincerus` | Modelo aprovado de texto; corpo `{{1}}` = resumo em uma linha |
-| `WA_TEMPLATE_DIGEST` | `diario_sincerus` | Modelo no formato "Diário Sincerus - Resumo ({{1}})" + "Informações importantes" + `{{2}}` (lista Cliente - Info). Só preencha depois de aprovado; sem ele, usa o `WA_TEMPLATE_ALERT` |
+| `WA_TEMPLATE_DIGEST` | `diario_sincerus` | Prefixo dos modelos `diario_sincerus_1` … `_10`: "Diário Sincerus - Resumo ({{1}})" + "Informações importantes" + um cliente por linha. O sistema escolhe o modelo pelo número de linhas (acima de 10, a última vira "e mais N"). Só preencha depois de aprovados; sem ele, usa o `WA_TEMPLATE_ALERT` |
 | `JOB_SECRET` | texto aleatório (24+ caracteres) | Protege `/api/jobs/run` |
 | `REPORT_EXCLUDE` | `DS AUTOS,VIAZAPI,Zion,Kaio Triani` | Contas fora dos envios (nome ou ID) |
 
