@@ -6,7 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { login, logout, readSession, users } from './auth.mjs';
 import * as meta from './meta.mjs';
-import { runJob, startScheduler } from './jobs.mjs';
+import { runJob, startScheduler, status as jobStatus } from './jobs.mjs';
 import { servePublicFile } from './whatsapp.mjs';
 
 const ROOT = path.resolve(fileURLToPath(new URL('../dist', import.meta.url)));
@@ -38,6 +38,7 @@ async function api(req, res, url) {
       const key = process.env.JOB_SECRET;
       if (!user && !(key && key.length >= 24 && url.searchParams.get('key') === key)) return send(401, { error: 'Não autorizado.' });
       const job = url.searchParams.get('job') || '';
+      if (job === 'status') return send(200, jobStatus()); // situação das rotinas e registro recente
       const dry = url.searchParams.get('dry') === '1';
       if (dry) {
         // no teste, devolve o detalhe do erro (onde falhou) para diagnóstico

@@ -118,10 +118,15 @@ WhatsApp comercial: +55 (83) 99905-4165.
 
 | Rotina | Quando (Brasília) | O que envia |
 |---|---|---|
-| `daily` | Todo dia, 8h | Resumo: saldos pré-pagos + todos os alertas abertos |
-| `alerts` | A cada 30 min, 7h–23h | Só alertas novos: sem saldo/saldo baixo, pagamento pendente/carência, anúncio reprovado ou com erro, duplicado, campanha ativa sem entrega, frequência alta |
-| `weekly` | Segunda, 8h | PDF "Relatório para cliente" (últimos 7 dias × 7 anteriores) de todos os clientes + PDF de anúncios ativos |
-| `monthly` | Dia 1º, 8h | PDF do relatório interno de desempenho do mês anterior, todos os clientes |
+| `daily` | Todo dia, 8h | Resumo de todos os alertas abertos (saldo/pagamento, anúncios com erro/reprovados/duplicados, entrega, frequência) |
+| `alerts` | A cada 30 min, 7h–23h | Só alertas novos (não roda logo depois do resumo do dia) |
+| `activeAds` | Segunda e quinta, 9h (`ACTIVE_ADS_DAYS`, `ACTIVE_ADS_HOUR`) | **Mensagem** (sem PDF) com os anúncios ativos por cliente: campanhas e nº de anúncios; partes de até 10 clientes |
+| `weekly` | Segunda, 8h | **Um PDF por cliente** ("Relatório para cliente", últimos 7 dias × 7 anteriores), cada um numa mensagem |
+| `monthly` | Dia 1º, 8h | PDF interno do mês anterior: consolidado da operação (investimento, resultados, conversas, leads, custo médio, receita/ROAS quando houver, desempenho por cliente com variação × mês anterior, campanhas de maior investimento) + seção detalhada de cada cliente |
+
+O PDF de anúncios ativos continua disponível na plataforma e sob demanda (`job=activeAdsPdf&dry=1`), mas não é enviado automaticamente.
+
+Registro: cada execução fica em `DATA_DIR/jobs-log.jsonl` (ok, falha parcial ou erro, com o resumo). Situação e últimas execuções: `/api/jobs/run?job=status&key=...`. Envios nunca se repetem: cada rotina marca a data antes de rodar, e a pasta de dados fica fora da pasta do app (não se perde ao reimplantar).
 
 Os PDFs são gerados no servidor com Chrome sem tela (`puppeteer-core` + `@sparticuz/chromium` na Hostinger). Os geradores de relatório são empacotados em `dist-server/reports.mjs` pelo `npm run build`.
 

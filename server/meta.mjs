@@ -23,11 +23,14 @@ async function graph(path, params = {}, { all = true } = {}) {
   const qs = new URLSearchParams({ ...params, access_token: process.env.META_ACCESS_TOKEN });
   let url = `${base()}/${version()}/${path}?${qs}`;
   const out = [];
-  for (let page = 0; url && page < 20; page++) {
+  for (let page = 0, wait = 0; url && page < 20; page++) {
     const res = await fetchRetry(url);
     const json = await res.json().catch(() => ({}));
     if (!res.ok || json.error) {
       const e = json.error || {};
+      // limite de requisições da Meta (4, 17, 32, 613, 80000–80014): espera e tenta a mesma página de novo (até 3 vezes)
+      const limited = [4, 17, 32, 613].includes(e.code) || (e.code >= 80000 && e.code <= 80014);
+      if (limited && wait < 3) { wait++; page--; await new Promise((r) => setTimeout(r, 30000 * wait)); continue; }
       throw Object.assign(new Error(`Meta API: ${e.message || res.status}${e.code ? ` (código ${e.code})` : ''}`), { status: res.status === 400 || res.status === 403 ? 502 : res.status });
     }
     if (!Array.isArray(json.data)) return json;
@@ -167,11 +170,13 @@ export function activeAds(refresh) {
       try {
         const ads = await graph(`${a.id}/ads`, {
           effective_status: JSON.stringify(['ACTIVE']),
-          fields: 'id,name,created_time,campaign{id,name,objective,effective_status},adset{id,name,effective_status}',
+          fields: 'id,name,created_time,campaign{id,name,objective,effective_status},adset{id,name,effective_status,end_time}',
           limit: '500',
         });
         const camps = new Map();
-        for (const ad of ads) {
+        // impulsionamento/conjunto com data de término já passada continua "ativo" na API, mas não veicula: fica de fora
+        const live = ads.filter((ad) => !(ad.adset?.end_time && new Date(ad.adset.end_time).getTime() < Date.now()));
+        for (const ad of live) {
           const c = ad.campaign || {};
           if (!camps.has(c.id)) camps.set(c.id, { id: c.id, name: c.name || '(campanha)', objective: c.objective || '', status: STATUS[c.effective_status] || c.effective_status || '', adsets: new Map() });
           const camp = camps.get(c.id);
@@ -181,7 +186,7 @@ export function activeAds(refresh) {
         }
         const campaigns = [...camps.values()].map((c) => ({ ...c, adsets: [...c.adsets.values()].map((s) => ({ ...s, ads: s.ads.sort((x, y) => x.name.localeCompare(y.name, 'pt-BR')) })) }))
           .sort((x, y) => x.name.localeCompare(y.name, 'pt-BR'));
-        return { id: a.id, name: a.name, currency: a.currency, status: a.status, business: a.business, campaigns, ads: ads.length };
+        return { id: a.id, name: a.name, currency: a.currency, status: a.status, business: a.business, campaigns, ads: live.length };
       } catch (e) { return { id: a.id, name: a.name, currency: a.currency, status: a.status, business: a.business, campaigns: [], ads: 0, error: e.message }; }
     });
     return { fetchedAt: new Date().toISOString(), accounts: rows };
@@ -255,7 +260,7 @@ export function clientReport(account, since, until, cmpSince, cmpUntil, refresh)
   return cached(`client:${account}:${since}:${until}:${cmpSince || ''}:${cmpUntil || ''}`, async () => {
     const tr = (s, u) => JSON.stringify({ since: s, until: u });
     const insFields = 'campaign_id,campaign_name,spend,impressions,reach,frequency,cpm,actions,results';
-    const accFields = 'spend,impressions,reach,frequency,cpm,actions';
+    const accFields = 'spend,impressions,reach,frequency,cpm,actions,action_values';
     const [info, campaigns, adsets, byCamp, acc, cmpCamp, cmpAcc, bySet, cmpSet] = await Promise.all([
       graph(account, { fields: 'name,currency,timezone_name' }, { all: false }),
       graph(`${account}/campaigns`, { fields: 'id,name,effective_status,start_time,daily_budget,lifetime_budget', limit: '500' }),
@@ -313,7 +318,11 @@ export function clientReport(account, since, until, cmpSince, cmpUntil, refresh)
       if (!list[0]) return null;
       const own = campRows.filter((r) => r.goal === main).reduce((t, r) => t + (r.results || 0), 0);
       const accRes = main.startsWith('actions:') ? actionOf(list[0].actions, main.slice(8)) : null;
-      return { ...fixReach(metrics(list[0]), campRows.reduce((t, r) => t + r.reach, 0)), results: accRes ?? own, resultsOwnGoal: own, reachSummed: campRows.filter((r) => r.reach).length > 1 };
+      // conversas, leads e receita atribuída (valor de compras) da conta, quando existirem
+      const a0 = list[0];
+      const revenue = ['omni_purchase', 'offsite_conversion.fb_pixel_purchase', 'onsite_conversion.purchase', 'purchase'].map((t) => actionOf(a0.action_values, t)).find((v) => v != null) ?? null;
+      return { ...fixReach(metrics(a0), campRows.reduce((t, r) => t + r.reach, 0)), results: accRes ?? own, resultsOwnGoal: own, reachSummed: campRows.filter((r) => r.reach).length > 1,
+        conversations: actionOf(a0.actions, CONV.slice(8)) || 0, leads: actionOf(a0.actions, 'onsite_conversion.lead_grouped') ?? actionOf(a0.actions, 'lead') ?? 0, revenue };
     };
 
     return {
