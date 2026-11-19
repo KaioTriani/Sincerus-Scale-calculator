@@ -25,7 +25,8 @@ async function extractChromium() {
   fs.mkdirSync(PRIVATE, { recursive: true });
   process.env.TMPDIR = PRIVATE; // o descompactador usa os.tmpdir()
   const pkgDir = path.dirname(createRequire(import.meta.url).resolve('@sparticuz/chromium'));
-  const { default: LambdaFS } = await import(pathToFileURL(path.join(pkgDir, 'lambdafs.js')).href);
+  const mod = await import(pathToFileURL(path.join(pkgDir, 'lambdafs.js')).href);
+  const LambdaFS = mod.default?.default ?? mod.default; // módulo CommonJS com exports.default
   const bin = path.join(pkgDir, '..', 'bin');
   await LambdaFS.inflate(path.join(bin, 'chromium.br'));
   await LambdaFS.inflate(path.join(bin, 'fonts.tar.br'));
