@@ -70,8 +70,9 @@ export async function htmlToPdf(html) {
   const browser = await launch();
   try {
     const page = await browser.newPage();
-    await page.setContent(html, { waitUntil: 'networkidle0', timeout: 60000 });
-    await page.evaluate(() => document.fonts?.ready);
+    // espera as fontes (Google Fonts) carregarem; se a rede demorar, segue com a página carregada em vez de falhar
+    try { await page.setContent(html, { waitUntil: 'networkidle0', timeout: 45000 }); } catch { await page.setContent(html, { waitUntil: 'load', timeout: 60000 }); }
+    await Promise.race([page.evaluate(() => document.fonts?.ready), new Promise((r) => setTimeout(r, 10000))]);
     return Buffer.from(await page.pdf({ printBackground: true, preferCSSPageSize: true }));
   } finally { await browser.close(); }
 }
