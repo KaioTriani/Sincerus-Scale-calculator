@@ -8,6 +8,7 @@ import { DATA_DIR } from './paths.mjs';
 import * as meta from './meta.mjs';
 import { htmlToPdf } from './pdf.mjs';
 import { chatwoot, inboxPath, accountPath, recipients, guardStatus, publishFile } from './whatsapp.mjs';
+import { verifyEmail, emailRecipients } from './email.mjs';
 
 const G = 'https://graph.facebook.com/v23.0';
 const NEEDED = [...Array.from({ length: 10 }, (_, i) => `diario_sincerus_${i + 1}`), 'relatorio_sincerus', 'alerta_sincerus'];
@@ -57,6 +58,13 @@ export async function healthCheck({ readState, writeState, logFile } = {}) {
     const bad = day.filter((l) => !l.ok && !String(l.result || '').includes('"deferred":true'));
     if (bad.length) add('Servidor', 'Rotinas recentes', 'aviso', `${bad.length} execução(ões) com falha nas últimas 24h: ${[...new Set(bad.map((l) => l.job))].join(', ')}`);
     else add('Servidor', 'Rotinas recentes', 'ok', `${day.length} execuções nas últimas 24h, sem erro`);
+  });
+
+  // ---------- E-mail ----------
+  await step('E-mail', 'Servidor de e-mail', async () => {
+    const v = await verifyEmail();
+    if (!v.configured) add('E-mail', 'Servidor de e-mail', 'aviso', 'não configurado (SMTP_USER, SMTP_PASS e REPORT_EMAILS na Hostinger)');
+    else add('E-mail', 'Servidor de e-mail', 'ok', `login ok · ${emailRecipients().length} destinatário(s)`);
   });
 
   // ---------- Meta Ads (leitura das contas) ----------

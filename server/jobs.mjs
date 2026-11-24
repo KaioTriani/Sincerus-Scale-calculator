@@ -14,6 +14,7 @@ import { whatsappConfigured, recipients, sendText, sendDocument, broadcast, flus
 import { healthCheck, healthLines } from './health.mjs';
 import { DATA_DIR } from './paths.mjs';
 import { buildMonthlySummaryHtml } from './monthlySummary.mjs';
+import { sendEmail, emailConfigured, emailLayout, escHtml } from './email.mjs';
 
 const DATA = DATA_DIR;
 const STATE = path.join(DATA, 'state.json');
@@ -54,10 +55,21 @@ const mergeHtml = (docs) => {
   const head = docs[0].match(/<head>([\s\S]*)<\/head>/)[1];
   return `<!doctype html><html lang="pt-BR"><head>${head}</head><body>${docs.map((d) => d.match(/<body>([\s\S]*)<\/body>/)[1]).join('\n')}</body></html>`;
 };
-async function sendPdf(html, fileName, caption, info, { dry } = {}) {
+const withPdf = (o, pdf, fileName) => Object.defineProperties(o, { pdf: { value: pdf, enumerable: false }, pdfName: { value: `${fileName}.pdf`, enumerable: false } });
+async function sendPdf(html, fileName, caption, info, { dry, whatsapp = true } = {}) {
   const pdf = await htmlToPdf(html);
-  if (dry) { fs.mkdirSync(DATA, { recursive: true }); fs.writeFileSync(path.join(DATA, `${fileName}.pdf`), pdf); return { dry: true, bytes: pdf.length, file: path.join(DATA, `${fileName}.pdf`) }; }
-  return { bytes: pdf.length, sent: await broadcast((phone) => sendDocument(phone, pdf, `${fileName}.pdf`, caption, info)) };
+  if (dry) { fs.mkdirSync(DATA, { recursive: true }); fs.writeFileSync(path.join(DATA, `${fileName}.pdf`), pdf); return withPdf({ dry: true, bytes: pdf.length, file: path.join(DATA, `${fileName}.pdf`) }, pdf, fileName); }
+  if (!whatsapp) return withPdf({ bytes: pdf.length }, pdf, fileName);
+  return withPdf({ bytes: pdf.length, sent: await broadcast((phone) => sendDocument(phone, pdf, `${fileName}.pdf`, caption, info)) }, pdf, fileName);
+}
+// e-mail de uma rotina, uma vez por período (marca no estado); falha no e-mail não derruba o WhatsApp
+async function emailOnce(mark, value, build, { dry } = {}) {
+  if (!dry && readState()[mark] === value) return { skipped: 'já enviado' };
+  try {
+    const r = await sendEmail(await build(), { dry });
+    if (!dry && r.ok) writeState({ ...readState(), [mark]: value });
+    return r;
+  } catch (e) { return { ok: false, error: e.message }; }
 }
 
 const cut = (s, n) => { const t = String(s || '').replace(/\s+/g, ' ').trim(); return t.length > n ? `${t.slice(0, n - 1).trim()}…` : t; };
@@ -84,16 +96,34 @@ export async function weekly({ dry = false, skip = [], onSent } = {}) {
   })).filter(Boolean);
   const period = `${dm(since)} a ${dm(until)}`;
   const out = { period: [since, until], clients: [], errors };
+  // 1) gera os PDFs (um por cliente, só com os dados daquela conta)
+  const docs = [];
   for (const x of list) {
     const name = x.model.client;
-    if (skip.includes(x.account)) { out.clients.push({ client: name, account: x.account, skipped: 'já enviado nesta semana' }); continue; }
     try {
-      const { html } = R.buildClientReportsHtml([x]); // um cliente por documento
+      const { html } = R.buildClientReportsHtml([x]);
       const file = `Relatorio_semanal_${fileSafe(name)}_${dm(since).replace('/', '-')}_a_${dm(until).replace('/', '-')}`;
-      const r = await sendPdf(html, file, `Relatório semanal · ${name} · ${period}`, { name: 'equipe', title: `o relatório semanal de ${name}`, period }, { dry });
-      out.clients.push({ client: name, account: x.account, ...r });
-      if (!dry && r.sent?.some((s) => s.ok)) onSent?.(x.account); // anota o progresso: se o processo cair, continua de onde parou
+      const r = await sendPdf(html, file, '', {}, { dry, whatsapp: false });
+      docs.push({ x, name, file, r });
     } catch (e) { errors.push({ client: name, error: e.message }); }
+  }
+  // 2) e-mail: todos os PDFs da semana numa mensagem
+  if (docs.length) {
+    out.email = await emailOnce('lastWeeklyEmail', since, () => ({
+      subject: `Relatórios semanais dos clientes · ${period}`,
+      html: emailLayout({ title: 'Relatórios semanais dos clientes', subtitle: `${period} · ${docs.length} clientes (comparação com a semana anterior)`, sections: [{ heading: 'Em anexo', html: `<p style="font-size:14px;margin:0 0 10px">Um PDF por cliente, pronto para encaminhar:</p><ul style="font-size:14px;line-height:1.7;margin:0;padding-left:18px">${docs.map((d) => `<li>${escHtml(d.name)}</li>`).join('')}</ul>` }] }),
+      attachments: docs.map((d) => ({ filename: d.r.pdfName, content: d.r.pdf })),
+    }), { dry });
+  }
+  // 3) WhatsApp: um PDF por mensagem (pula quem já recebeu, se a rotina estiver continuando de onde parou)
+  for (const d of docs) {
+    if (dry) { out.clients.push({ client: d.name, account: d.x.account, ...d.r }); continue; }
+    if (skip.includes(d.x.account)) { out.clients.push({ client: d.name, account: d.x.account, skipped: 'já enviado nesta semana' }); continue; }
+    try {
+      const sent = await broadcast((phone) => sendDocument(phone, d.r.pdf, d.r.pdfName, `Relatório semanal · ${d.name} · ${period}`, { name: 'equipe', title: `o relatório semanal de ${d.name}`, period }));
+      out.clients.push({ client: d.name, account: d.x.account, bytes: d.r.bytes, sent });
+      if (sent.some((x) => x.ok || x.deferred)) onSent?.(d.x.account); // anota o progresso
+    } catch (e) { errors.push({ client: d.name, error: e.message }); }
   }
   return out;
 }
@@ -186,6 +216,12 @@ export async function monthly({ dry = false } = {}) {
   const summary = buildMonthlySummaryHtml(ok.map((x) => x.row), { month: mes(first), prevMonth: mes(prevFirst), logo: logo(), rateSource: fx.source });
   const html = mergeHtml(ok.map((x) => x.doc)).replace('<body>', () => `<body>${summary}`);
   const r = await sendPdf(html, `Relatorio_interno_${first.slice(0, 7)}`, `Relatório interno de desempenho · ${mes(first)} · ${ok.length} clientes`, { name: 'equipe', title: 'o relatório interno do mês', period: mes(first) }, { dry });
+  const totalBRL = ok.reduce((t, x) => t + x.row.cur.spend * (x.row.currency === 'USD' ? fx.rate : 1), 0);
+  r.email = await emailOnce('lastMonthlyEmail', first.slice(0, 7), () => ({
+    subject: `Relatório interno de desempenho · ${mes(first)}`,
+    html: emailLayout({ title: 'Relatório interno do mês', subtitle: `${mes(first)} · ${ok.length} clientes · uso interno`, sections: [{ heading: 'Resumo', html: `<p style="font-size:14px;line-height:1.6;margin:0">Investimento total no mês: <b>R$ ${totalBRL.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</b> em ${ok.length} clientes, comparado com ${escHtml(mes(prevFirst))}.<br>O PDF em anexo traz o consolidado da operação e a seção detalhada de cada cliente.</p>` }] }),
+    attachments: [{ filename: r.pdfName, content: r.pdf }],
+  }), { dry });
   return { month: first.slice(0, 7), clients: ok.length, totalSpendBRL: Math.round(ok.reduce((t, x) => t + x.row.cur.spend * (x.row.currency === 'USD' ? fx.rate : 1), 0)), errors, ...r };
 }
 
@@ -298,7 +334,40 @@ export async function daily({ dry = false } = {}) {
   return { alerts: now.length, sent };
 }
 
-export const JOBS = { weekly, monthly, daily, alerts, activeAds, activeAdsPdf };
+// E-mail diário (8h): avisos do dia + situação do sistema + anúncios ativos por cliente (lista no corpo e PDF em anexo)
+export async function emailDaily({ dry = false } = {}) {
+  const R = await reports();
+  const { date } = nowBR();
+  const [open, ads] = await Promise.all([collectAlerts(), meta.activeAds(true)]);
+  const accs = ads.accounts.filter((a) => a.campaigns.length && !excluded(a)).sort((a, b) => friendly(a.name).localeCompare(friendly(b.name), 'pt-BR'));
+  const COLOR = { crit: '#D23B2E', warn: '#E8A100' };
+  const rows = order(open).map((a) => `<tr><td style="padding:8px 6px;border-bottom:1px solid #EEE;vertical-align:top"><span style="display:inline-block;width:10px;height:10px;border-radius:5px;background:${a.kind === 'saldo/pagamento' && a.level !== 'crit' ? '#F76000' : COLOR[a.level] || '#E8A100'}"></span></td><td style="padding:8px 6px;border-bottom:1px solid #EEE;font-weight:bold;vertical-align:top;white-space:nowrap">${escHtml(friendly(a.client))}</td><td style="padding:8px 6px;border-bottom:1px solid #EEE;font-size:13px">${escHtml(a.info || a.text)}</td></tr>`).join('');
+  const alertsHtml = open.length
+    ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-size:14px;border-collapse:collapse">${rows}</table><p style="font-size:11px;color:#8A8F98;margin:8px 0 0">● vermelho: urgente · ● laranja: resolver em breve · ● amarelo: atenção</p>`
+    : '<p style="font-size:14px;margin:0">✅ Nenhum problema nas contas: saldos, anúncios e entrega em dia.</p>';
+  const h = readState().health;
+  const sysBad = h ? h.items.filter((i) => i.nivel !== 'ok' && !i.corrigido) : [];
+  const sysHtml = !h ? '<p style="font-size:13px;margin:0;color:#8A8F98">Verificação ainda não executada hoje.</p>'
+    : sysBad.length ? `<ul style="font-size:13px;line-height:1.6;margin:0;padding-left:18px">${sysBad.map((i) => `<li><b>${escHtml(i.area)} · ${escHtml(i.nome)}:</b> ${escHtml(i.detalhe)}</li>`).join('')}</ul>`
+    : '<p style="font-size:14px;margin:0">✅ Meta, WhatsApp, e-mail e servidor funcionando.</p>';
+  const nAds = accs.reduce((t, a) => t + R.clientAdList(a).length, 0);
+  const adsHtml = accs.map((a) => `<div style="margin:0 0 14px"><div style="font-size:14px;font-weight:bold;margin-bottom:4px">${escHtml(friendly(a.name))} <span style="color:#8A8F98;font-weight:normal;font-size:12px">· ${a.campaigns.length} campanha(s)</span></div>${a.campaigns.map((c) => `<div style="font-size:12px;color:#5B6068;margin:4px 0 2px">${escHtml(campaignShort(c.name))}</div><div style="font-size:13px;line-height:1.55">${[...new Set(c.adsets.flatMap((st) => st.ads.map((x) => R.adLabel ? R.adLabel(x.name) : x.name)))].map((l) => `✓ ${escHtml(l)}`).join('<br>')}</div>`).join('')}</div>`).join('');
+  let pdf = null, pdfName = '';
+  if (accs.length) {
+    const { html, fileName } = R.buildActiveAdsHtml(accs, logo(), { when: new Date(ads.fetchedAt) });
+    pdf = await htmlToPdf(html); pdfName = `${fileName}.pdf`;
+  }
+  return emailOnce('lastDailyEmail', date, () => ({
+    subject: `Resumo do dia ${dm(date)} · ${open.length ? `${open.length} aviso(s)` : 'tudo certo'} · ${nAds} anúncios ativos`,
+    html: emailLayout({
+      title: `Resumo do dia ${dm(date)}`, subtitle: `${open.length} aviso(s) · ${accs.length} clientes com ${nAds} anúncios ativos`,
+      sections: [{ heading: 'Avisos das contas', html: alertsHtml }, { heading: 'Situação do sistema', html: sysHtml }, { heading: 'Anúncios ativos por cliente', html: adsHtml || '<p style="font-size:14px;margin:0">Nenhum anúncio ativo.</p>' }],
+    }),
+    attachments: pdf ? [{ filename: pdfName, content: pdf }] : [],
+  }), { dry });
+}
+
+export const JOBS = { weekly, monthly, daily, alerts, activeAds, activeAdsPdf, emailDaily };
 
 // ---------- registro de execuções (DATA_DIR/jobs-log.jsonl) ----------
 const LOG = path.join(DATA, 'jobs-log.jsonl');
@@ -396,6 +465,10 @@ async function tickOnce() {
     try { await runJob('health'); ran.push('health'); } catch { /* registrado */ }
   }
   const due = dueJobs(now, readState());
+  if (emailConfigured() && now.hour >= 8 && readState().lastDailyEmail !== now.date && !readState().emailDailyTried?.startsWith(now.date)) {
+    // marca a tentativa (uma por hora no máximo); o envio confirmado marca lastDailyEmail
+    due.push(['emailDaily', 'emailDailyTried', `${now.date}T${String(now.hour).padStart(2, '0')}`]);
+  }
   if (due.some(([j]) => j === 'daily')) writeState({ ...readState(), lastAlertsAt: Date.now() });
   for (const [job, mark, value] of due) {
     if (job === 'weekly') { await weeklyResumable(value); continue; }

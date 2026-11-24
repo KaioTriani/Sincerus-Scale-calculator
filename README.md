@@ -124,6 +124,16 @@ WhatsApp comercial: +55 (83) 99905-4165.
 | `weekly` | Segunda, 8h | **Um PDF por cliente** ("Relatório para cliente", últimos 7 dias × 7 anteriores), cada um numa mensagem |
 | `monthly` | Dia 1º, 8h | PDF interno do mês anterior: consolidado da operação (investimento, resultados, conversas, leads, custo médio, receita/ROAS quando houver, desempenho por cliente com variação × mês anterior, campanhas de maior investimento) + seção detalhada de cada cliente |
 
+### Relatórios por e-mail
+
+| E-mail | Quando | Conteúdo |
+|---|---|---|
+| Resumo do dia | Todo dia, 8h | Avisos das contas, situação do sistema e anúncios ativos por cliente (lista no corpo + PDF em anexo) |
+| Relatórios semanais | Segunda, 8h | Todos os PDFs da semana (um por cliente) num e-mail |
+| Relatório interno | Dia 1º, 8h | PDF do mês anterior (consolidado + detalhe por cliente) |
+
+Variáveis: `SMTP_USER` (ex.: relatorios@sincerusscale.com.br), `SMTP_PASS`, `REPORT_EMAILS` (destinatários separados por vírgula); opcionais `SMTP_HOST` (padrão smtp.hostinger.com), `SMTP_PORT` (465), `EMAIL_FROM`. Sem elas o e-mail fica desligado. Cada e-mail sai uma vez por período e não depende do WhatsApp.
+
 ### Verificação diária e defesas de envio
 
 - **health** (todo dia 7h e `job=health`): testa pasta de dados, Cron, geração de PDF, link público dos PDFs, token da Meta (e quando expira), contas de anúncio, API do Chatwoot, modelos sincronizados (sincroniza sozinho se faltar), número do WhatsApp (status, qualidade), webhook do número, categoria dos modelos, mensagens recebidas e entregas das últimas 24h. O resultado aparece no fim do resumo das 8h e em `job=status`.
