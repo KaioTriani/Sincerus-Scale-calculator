@@ -198,7 +198,7 @@ export async function collectAlerts() {
     const c = R.classifyBalance(a);
     if (c.level === 'crit' || c.level === 'warn') {
       const val = a.prepay ? ` (saldo ${a.currency === 'USD' ? 'US$' : 'R$'} ${(a.available ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})` : '';
-      out.push({ key: `bal:${a.id}:${c.note}`, client: a.name, level: c.level, kind: 'saldo/pagamento', text: `${c.note}${val}`, info: `${c.note.split(' — ')[0]}${val.replace(' (saldo ', ' (')}` });
+      out.push({ key: `bal:${a.id}:${c.note}`, client: a.name, level: c.level, kind: 'saldo/pagamento', text: `${c.note}${val}`, info: balanceInfo(c.note, val) });
     }
   }
   const accs = (await meta.accounts()).filter((a) => a.active && !excluded(a));
@@ -209,25 +209,57 @@ export async function collectAlerts() {
   return out;
 }
 // ---------- formato da mensagem ----------
-// *Diário Sincerus - Resumo (Tipo de aviso)*
+// *Diário Sincerus - Resumo (Resumo do dia 23/11 · 3 avisos)*
 // *Informações importantes*
-// Cliente - Info
-function shortInfo(x) {
-  if (x.kind === 'baixo alcance') return x.campaign ? `Campanha "${cut(x.campaign, 40)}" sem entrega ontem` : `${cut(x.detail.split(' — ')[0], 70)} — verificar restrição da Página`;
-  if (x.kind === 'frequência alta') return `Frequência alta (${x.detail.replace(/^Frequência de /, '')})`;
-  const label = { reprovado: 'Anúncio reprovado', erro: 'Anúncio com erro', duplicado: 'Anúncio duplicado' }[x.kind] || x.kind;
-  return `${label}: "${cut(x.ad, 40)}"`;
+// 🔴 AM IMPORTS: sem saldo (R$ 0,00) → recarregar
+// 🟡 JK IPHONE: frequência alta (4,4x em 7 dias) → trocar criativos
+// Uma linha por aviso, em português direto: ícone de gravidade, cliente, o que houve e o que fazer.
+
+// "[SS] [01] [ENGAJAMENTO] [WHATSAPP] [01/10/2026]" → "Engajamento WhatsApp"
+function campaignShort(name) {
+  const parts = [...String(name || '').matchAll(/[[{(]([^\]})]+)[\]})]/g)].map((m) => m[1].trim());
+  const words = parts.filter((p) => !/^(ss|ac|\d+|\d{1,2}\/\d{1,2}(\/\d{2,4})?|start)$/i.test(p) && !/\d{2}\/\d{2}/.test(p));
+  const nice = (w) => w.toLowerCase().replace(/(^|[\s/+-])(\p{L})/gu, (m, sep, ch) => sep + ch.toUpperCase()).replace(/\bWhatsapp\b/g, 'WhatsApp').replace(/\bDm\b/g, 'DM');
+  const out = words.slice(0, 3).map(nice).join(' · ');
+  return out || cut(name, 36);
 }
+const money2 = (txt) => (txt.match(/(R\$|US\$) ?[\d.,]+/) || [''])[0].replace(/(R\$|US\$) ?/, '$1 ');
+function shortInfo(x) {
+  if (x.kind === 'baixo alcance') {
+    if (!x.campaign) return `${x.detail.match(/^\d+/)?.[0] || 'várias'} campanhas sem veicular ontem → ver se a Página ou a conta está restrita`;
+    return `campanha "${campaignShort(x.campaign)}" não veiculou ontem → conferir orçamento e público`;
+  }
+  if (x.kind === 'frequência alta') return `frequência alta (${x.detail.replace(/^Frequência de /, '').replace('x em', 'x em')}) → trocar criativos`;
+  if (x.kind === 'reprovado') return `anúncio reprovado "${cut(x.ad, 30)}" → editar ou pedir revisão`;
+  if (x.kind === 'erro') return `anúncio com erro "${cut(x.ad, 30)}" → ${cut(x.detail, 40).toLowerCase()}`;
+  if (x.kind === 'duplicado') return `anúncio duplicado "${cut(x.ad, 30)}" → pausar uma das cópias`;
+  return cut(x.detail || x.kind, 60);
+}
+function balanceInfo(note, val) {
+  const v = money2(val);
+  if (/^Sem saldo/.test(note)) return `sem saldo${v ? ` (${v})` : ''}, anúncios parados → recarregar`;
+  if (/^Saldo baixo/.test(note)) return `saldo baixo${v ? ` (${v})` : ''} → recarregar em breve`;
+  if (/^Pagamento pendente/.test(note)) return 'pagamento pendente → regularizar o cartão, a veiculação pode parar';
+  if (/carência/.test(note)) return 'em período de carência → regularizar o pagamento';
+  if (/desativada/.test(note)) return 'conta desativada pela Meta → verificar na Qualidade da conta';
+  if (/análise de risco/.test(note)) return 'conta em análise de risco pela Meta';
+  if (/Sem forma de pagamento/.test(note)) return 'sem forma de pagamento → cadastrar cartão';
+  return note.toLowerCase();
+}
+const ICON = (a) => (a.kind === 'saldo/pagamento' ? (a.level === 'crit' ? '🔴' : '🟠') : a.level === 'crit' ? '🔴' : '🟡');
 const TYPE = { 'saldo/pagamento': 'Saldos', reprovado: 'Anúncios', erro: 'Anúncios', duplicado: 'Anúncios', 'baixo alcance': 'Entrega', 'frequência alta': 'Entrega' };
-const typeOf = (list) => { const t = [...new Set(list.map((a) => TYPE[a.kind] || 'Alertas'))]; if (!t.length) return 'Sem alertas'; return t.length === 1 ? t[0] : `${t.slice(0, -1).join(', ')} e ${t[t.length - 1]}`; };
-// por tipo (saldos, anúncios, entrega), mais grave primeiro e depois por cliente
+const typeOf = (list) => { const t = [...new Set(list.map((a) => TYPE[a.kind] || 'Alertas'))]; if (!t.length) return 'tudo certo'; return (t.length === 1 ? t[0] : `${t.slice(0, -1).join(', ')} e ${t[t.length - 1]}`).toLowerCase(); };
+// mais grave primeiro (vermelho), depois saldos → anúncios → entrega, e por cliente
 const GROUP = ['Saldos', 'Anúncios', 'Entrega'];
-const order = (list) => [...list].sort((a, b) => (GROUP.indexOf(TYPE[a.kind]) - GROUP.indexOf(TYPE[b.kind])) || (a.level === b.level ? 0 : a.level === 'crit' ? -1 : 1) || friendly(a.client).localeCompare(friendly(b.client), 'pt-BR'));
-const lines = (list) => order(list).map((a) => `${friendly(a.client)} - ${a.info || a.text}`);
+const order = (list) => [...list].sort((a, b) => (a.level === b.level ? 0 : a.level === 'crit' ? -1 : 1) || (GROUP.indexOf(TYPE[a.kind]) - GROUP.indexOf(TYPE[b.kind])) || friendly(a.client).localeCompare(friendly(b.client), 'pt-BR'));
+const lines = (list) => order(list).map((a) => `${ICON(a)} ${friendly(a.client)}: ${a.info || a.text}`);
+const avisos = (n) => `${n} ${n === 1 ? 'aviso' : 'avisos'}`;
 function message(kind, list) {
-  const type = typeOf(list);
-  const body = list.length ? lines(list).join('\n') : 'Nenhum alerta aberto. Tudo certo com as contas ✅';
-  return { text: `*Diário Sincerus - ${kind} (${type})*\n\n*Informações importantes*\n\n${body}`, digest: { type: kind === 'Resumo' ? type : `Alerta: ${type}`, lines: lines(list) } };
+  const day = dm(nowBR().date);
+  const title = kind === 'Resumo' ? `Resumo do dia ${day} · ${list.length ? avisos(list.length) : 'nenhum aviso'}` : `Novo alerta · ${typeOf(list)}`;
+  const body = list.length ? lines(list).join('\n') : '✅ Nenhum problema nas contas. Saldos, anúncios e entrega em dia.';
+  const legend = list.length ? '\n\n🔴 urgente · 🟠 resolver em breve · 🟡 atenção' : '';
+  return { text: `*Diário Sincerus - ${kind} (${title})*\n\n*Informações importantes*\n\n${body}${legend}`, digest: { type: title, lines: lines(list) } };
 }
 const oneLine = (list) => list.slice(0, 8).map((a) => `${friendly(a.client)}: ${a.kind}`).join('; ') + (list.length > 8 ? `; e mais ${list.length - 8}` : '');
 
