@@ -10,7 +10,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as meta from './meta.mjs';
 import { htmlToPdf } from './pdf.mjs';
-import { whatsappConfigured, recipients, sendText, sendDocument, broadcast, flushQueue, guardStatus } from './whatsapp.mjs';
+import { whatsappConfigured, recipients, sendText, sendDocument, broadcast, flushQueue, guardStatus, templateCategories } from './whatsapp.mjs';
 import { healthCheck, healthLines } from './health.mjs';
 import { DATA_DIR } from './paths.mjs';
 import { buildMonthlySummaryHtml } from './monthlySummary.mjs';
@@ -357,7 +357,17 @@ export async function emailDaily({ dry = false } = {}) {
     html: emailLayout({ title: `Resumo do dia ${dm(date)}`, subtitle: 'Relatório diário em PDF anexado', sections: [{ html: `<p style="font-size:14px;line-height:1.6;margin:0">Segue em anexo o resumo do dia: <b>${open.length} aviso(s)</b> nas contas, situação do sistema e <b>${nAds} anúncios ativos</b> em ${clients.length} clientes.</p>` }] }),
     attachments: [{ filename: fileName, content: pdf }],
   }), { dry });
-  return { ...r, bytes: pdf.length, ...(dry ? { file: path.join(DATA, fileName) } : {}) };
+  // WhatsApp: o mesmo PDF, só quando o modelo de documento já é de Utilidade (sem limite diário); senão fica só no e-mail
+  let wa = { skipped: 'modelo de documento de Utilidade ainda não aprovado' };
+  if (!dry && whatsappConfigured() && readState().lastDailyPdfWa !== date) {
+    const cats = await templateCategories();
+    if (cats[process.env.WA_TEMPLATE_DOC || 'documento_sincerus'] === 'UTILITY') {
+      wa = await broadcast((phone) => sendDocument(phone, pdf, fileName, `Resumo do dia ${dm(date)}`, { name: 'equipe', title: `o resumo do dia ${dm(date)}`, period: dm(date) }));
+      writeState({ ...readState(), lastDailyPdfWa: date });
+    }
+  }
+  if (!dry) writeState({ ...readState(), lastDailyPdf: date });
+  return { email: r, whatsapp: wa, bytes: pdf.length, ...(dry ? { file: path.join(DATA, fileName) } : {}) };
 }
 
 export const JOBS = { weekly, monthly, daily, alerts, activeAds, activeAdsPdf, emailDaily };
@@ -458,8 +468,8 @@ async function tickOnce() {
     try { await runJob('health'); ran.push('health'); } catch { /* registrado */ }
   }
   const due = dueJobs(now, readState());
-  if (emailConfigured() && now.hour >= 8 && readState().lastDailyEmail !== now.date && !readState().emailDailyTried?.startsWith(now.date)) {
-    // marca a tentativa (uma por hora no máximo); o envio confirmado marca lastDailyEmail
+  // PDF do resumo do dia (e-mail + WhatsApp quando possível): uma vez por dia, a partir das 8h
+  if ((emailConfigured() || whatsappConfigured()) && now.hour >= 8 && readState().lastDailyPdf !== now.date && !readState().emailDailyTried?.startsWith(now.date)) {
     due.push(['emailDaily', 'emailDailyTried', `${now.date}T${String(now.hour).padStart(2, '0')}`]);
   }
   if (due.some(([j]) => j === 'daily')) writeState({ ...readState(), lastAlertsAt: Date.now() });

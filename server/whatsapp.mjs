@@ -147,7 +147,7 @@ async function deliver(phone, conv, payload, item) {
 //  - WA_TEMPLATE_DIGEST=off volta ao modelo antigo (WA_TEMPLATE_ALERT, {{1}} = resumo numa linha)
 // categoria de cada modelo como a Meta aprovou (Utilidade não tem o limite diário por pessoa do Marketing)
 let tplCache = { at: 0, map: {} };
-async function templateCategories() {
+export async function templateCategories() {
   if (Date.now() - tplCache.at < 10 * 60000) return tplCache.map;
   try {
     const ib = await cw(`/accounts/${ACCOUNT()}/inboxes/${INBOX()}`);
