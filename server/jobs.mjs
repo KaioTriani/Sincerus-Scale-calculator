@@ -303,6 +303,8 @@ export const JOBS = { weekly, monthly, daily, alerts, activeAds, activeAdsPdf };
 // ---------- registro de execuções (DATA_DIR/jobs-log.jsonl) ----------
 const LOG = path.join(DATA, 'jobs-log.jsonl');
 JOBS.health = () => healthCheck({ readState, writeState, logFile: LOG });
+// teste de envio de PDF pelo WhatsApp (lista de anúncios ativos), sob demanda: job=testpdf
+JOBS.testpdf = ({ dry = false } = {}) => activeAdsPdf({ dry });
 function appendLog(entry) {
   try {
     fs.appendFileSync(LOG, `${JSON.stringify(entry)}\n`);
