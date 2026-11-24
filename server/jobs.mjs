@@ -15,6 +15,7 @@ import { healthCheck, healthLines } from './health.mjs';
 import { DATA_DIR } from './paths.mjs';
 import { buildMonthlySummaryHtml } from './monthlySummary.mjs';
 import { sendEmail, emailConfigured, emailLayout, escHtml } from './email.mjs';
+import { buildDailyReportHtml } from './dailyReport.mjs';
 
 const DATA = DATA_DIR;
 const STATE = path.join(DATA, 'state.json');
@@ -334,37 +335,29 @@ export async function daily({ dry = false } = {}) {
   return { alerts: now.length, sent };
 }
 
-// E-mail diário (8h): avisos do dia + situação do sistema + anúncios ativos por cliente (lista no corpo e PDF em anexo)
+// E-mail diário (8h): PDF "Resumo do dia" no padrão Sincerus — avisos, situação do sistema e anúncios ativos por cliente
 export async function emailDaily({ dry = false } = {}) {
   const R = await reports();
   const { date } = nowBR();
   const [open, ads] = await Promise.all([collectAlerts(), meta.activeAds(true)]);
   const accs = ads.accounts.filter((a) => a.campaigns.length && !excluded(a)).sort((a, b) => friendly(a.name).localeCompare(friendly(b.name), 'pt-BR'));
-  const COLOR = { crit: '#D23B2E', warn: '#E8A100' };
-  const rows = order(open).map((a) => `<tr><td style="padding:8px 6px;border-bottom:1px solid #EEE;vertical-align:top"><span style="display:inline-block;width:10px;height:10px;border-radius:5px;background:${a.kind === 'saldo/pagamento' && a.level !== 'crit' ? '#F76000' : COLOR[a.level] || '#E8A100'}"></span></td><td style="padding:8px 6px;border-bottom:1px solid #EEE;font-weight:bold;vertical-align:top;white-space:nowrap">${escHtml(friendly(a.client))}</td><td style="padding:8px 6px;border-bottom:1px solid #EEE;font-size:13px">${escHtml(a.info || a.text)}</td></tr>`).join('');
-  const alertsHtml = open.length
-    ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-size:14px;border-collapse:collapse">${rows}</table><p style="font-size:11px;color:#8A8F98;margin:8px 0 0">● vermelho: urgente · ● laranja: resolver em breve · ● amarelo: atenção</p>`
-    : '<p style="font-size:14px;margin:0">✅ Nenhum problema nas contas: saldos, anúncios e entrega em dia.</p>';
   const h = readState().health;
-  const sysBad = h ? h.items.filter((i) => i.nivel !== 'ok' && !i.corrigido) : [];
-  const sysHtml = !h ? '<p style="font-size:13px;margin:0;color:#8A8F98">Verificação ainda não executada hoje.</p>'
-    : sysBad.length ? `<ul style="font-size:13px;line-height:1.6;margin:0;padding-left:18px">${sysBad.map((i) => `<li><b>${escHtml(i.area)} · ${escHtml(i.nome)}:</b> ${escHtml(i.detalhe)}</li>`).join('')}</ul>`
-    : '<p style="font-size:14px;margin:0">✅ Meta, WhatsApp, e-mail e servidor funcionando.</p>';
-  const nAds = accs.reduce((t, a) => t + R.clientAdList(a).length, 0);
-  const adsHtml = accs.map((a) => `<div style="margin:0 0 14px"><div style="font-size:14px;font-weight:bold;margin-bottom:4px">${escHtml(friendly(a.name))} <span style="color:#8A8F98;font-weight:normal;font-size:12px">· ${a.campaigns.length} campanha(s)</span></div>${a.campaigns.map((c) => `<div style="font-size:12px;color:#5B6068;margin:4px 0 2px">${escHtml(campaignShort(c.name))}</div><div style="font-size:13px;line-height:1.55">${[...new Set(c.adsets.flatMap((st) => st.ads.map((x) => R.adLabel ? R.adLabel(x.name) : x.name)))].map((l) => `✓ ${escHtml(l)}`).join('<br>')}</div>`).join('')}</div>`).join('');
-  let pdf = null, pdfName = '';
-  if (accs.length) {
-    const { html, fileName } = R.buildActiveAdsHtml(accs, logo(), { when: new Date(ads.fetchedAt) });
-    pdf = await htmlToPdf(html); pdfName = `${fileName}.pdf`;
-  }
-  return emailOnce('lastDailyEmail', date, () => ({
+  const sys = h ? h.items.filter((i) => i.nivel !== 'ok' && !i.corrigido) : [];
+  const clients = accs.map((a) => ({
+    name: friendly(a.name),
+    campaigns: a.campaigns.map((c) => ({ name: campaignShort(c.name), ads: [...new Set(c.adsets.flatMap((st) => st.ads.map((x) => R.adLabel(x.name))))] })),
+  }));
+  const html = buildDailyReportHtml({ day: dm(date), alerts: order(open).map((a) => ({ client: friendly(a.client), level: a.level, kind: a.kind, info: a.info || a.text })), sys, sysChecked: !!h && h.at?.slice(0, 10) === new Date().toISOString().slice(0, 10), clients, logo: logo() });
+  const pdf = await htmlToPdf(html);
+  const fileName = `Resumo_do_dia_${date}.pdf`;
+  if (dry) { fs.mkdirSync(DATA, { recursive: true }); fs.writeFileSync(path.join(DATA, fileName), pdf); fs.writeFileSync(path.join(DATA, fileName.replace(/.pdf$/, '.html')), html); }
+  const nAds = clients.reduce((t, c) => t + c.campaigns.reduce((u, k) => u + k.ads.length, 0), 0);
+  const r = await emailOnce('lastDailyEmail', date, () => ({
     subject: `Resumo do dia ${dm(date)} · ${open.length ? `${open.length} aviso(s)` : 'tudo certo'} · ${nAds} anúncios ativos`,
-    html: emailLayout({
-      title: `Resumo do dia ${dm(date)}`, subtitle: `${open.length} aviso(s) · ${accs.length} clientes com ${nAds} anúncios ativos`,
-      sections: [{ heading: 'Avisos das contas', html: alertsHtml }, { heading: 'Situação do sistema', html: sysHtml }, { heading: 'Anúncios ativos por cliente', html: adsHtml || '<p style="font-size:14px;margin:0">Nenhum anúncio ativo.</p>' }],
-    }),
-    attachments: pdf ? [{ filename: pdfName, content: pdf }] : [],
+    html: emailLayout({ title: `Resumo do dia ${dm(date)}`, subtitle: 'Relatório diário em PDF anexado', sections: [{ html: `<p style="font-size:14px;line-height:1.6;margin:0">Segue em anexo o resumo do dia: <b>${open.length} aviso(s)</b> nas contas, situação do sistema e <b>${nAds} anúncios ativos</b> em ${clients.length} clientes.</p>` }] }),
+    attachments: [{ filename: fileName, content: pdf }],
   }), { dry });
+  return { ...r, bytes: pdf.length, ...(dry ? { file: path.join(DATA, fileName) } : {}) };
 }
 
 export const JOBS = { weekly, monthly, daily, alerts, activeAds, activeAdsPdf, emailDaily };
