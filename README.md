@@ -124,6 +124,14 @@ WhatsApp comercial: +55 (83) 99905-4165.
 | `weekly` | Segunda, 8h | **Um PDF por cliente** ("Relatório para cliente", últimos 7 dias × 7 anteriores), cada um numa mensagem |
 | `monthly` | Dia 1º, 8h | PDF interno do mês anterior: consolidado da operação (investimento, resultados, conversas, leads, custo médio, receita/ROAS quando houver, desempenho por cliente com variação × mês anterior, campanhas de maior investimento) + seção detalhada de cada cliente |
 
+### Verificação diária e defesas de envio
+
+- **health** (todo dia 7h e `job=health`): testa pasta de dados, Cron, geração de PDF, link público dos PDFs, token da Meta (e quando expira), contas de anúncio, API do Chatwoot, modelos sincronizados (sincroniza sozinho se faltar), número do WhatsApp (status, qualidade), webhook do número, categoria dos modelos, mensagens recebidas e entregas das últimas 24h. O resultado aparece no fim do resumo das 8h e em `job=status`.
+- **Envio conferido**: cada mensagem é acompanhada até ser entregue ou falhar.
+- **Limite da Meta (131049)**: ao detectar, o número fica em pausa por 24h e o conteúdo vai para uma fila, reenviada automaticamente depois (avisos juntos numa mensagem, PDFs um a um). Nada de mensagens "Falha ao enviar" em sequência.
+- **Preferência por Utilidade**: os avisos são divididos nos modelos aprovados como Utilidade (hoje `diario_sincerus_1`, `_2` e `_4`), que não têm limite por pessoa. PDFs usam `documento_sincerus` quando aprovado como Utilidade.
+- **Menos mensagens**: alertas fora do resumo só saem na hora se forem urgentes (🔴); o resto entra no resumo das 8h.
+
 O PDF de anúncios ativos continua disponível na plataforma e sob demanda (`job=activeAdsPdf&dry=1`), mas não é enviado automaticamente.
 
 Registro: cada execução fica em `DATA_DIR/jobs-log.jsonl` (ok, falha parcial ou erro, com o resumo). Situação e últimas execuções: `/api/jobs/run?job=status&key=...`. Envios nunca se repetem: cada rotina marca a data antes de rodar, e a pasta de dados fica fora da pasta do app (não se perde ao reimplantar).

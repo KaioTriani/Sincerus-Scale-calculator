@@ -10,7 +10,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as meta from './meta.mjs';
 import { htmlToPdf } from './pdf.mjs';
-import { whatsappConfigured, recipients, sendText, sendDocument, broadcast } from './whatsapp.mjs';
+import { whatsappConfigured, recipients, sendText, sendDocument, broadcast, flushQueue, guardStatus } from './whatsapp.mjs';
+import { healthCheck, healthLines } from './health.mjs';
 import { DATA_DIR } from './paths.mjs';
 import { buildMonthlySummaryHtml } from './monthlySummary.mjs';
 
@@ -268,12 +269,13 @@ export async function alerts({ dry = false } = {}) {
   const state = readState();
   const now = await collectAlerts();
   const fresh = now.filter((a) => !state.alerts[a.key]);
-  const out = { open: now.length, new: fresh.length };
-  if (fresh.length && !dry) {
-    const { text, digest } = message('Alerta', fresh);
-    out.sent = await broadcast((phone) => sendText(phone, text, { digest, templateBody: `${fresh.length} novo(s) alerta(s): ${oneLine(fresh)}` }));
+  const urgent = fresh.filter((a) => a.level === 'crit');
+  const out = { open: now.length, new: fresh.length, urgent: urgent.length };
+  if (urgent.length && !dry) {
+    const { text, digest } = message('Alerta', urgent);
+    out.sent = await broadcast((phone) => sendText(phone, text, { digest, templateBody: `${urgent.length} novo(s) alerta(s): ${oneLine(urgent)}` }));
   }
-  if (dry) out.preview = fresh.length ? message('Alerta', fresh).text : '';
+  if (dry) out.preview = urgent.length ? message('Alerta', urgent).text : '';
   if (!dry) {
     const keep = Object.fromEntries(now.map((a) => [a.key, state.alerts[a.key] || new Date().toISOString()])); // resolvidos saem do estado
     writeState({ ...readState(), alerts: keep });
@@ -284,7 +286,11 @@ export async function alerts({ dry = false } = {}) {
 // todo dia 8h: resumo completo (saldos + todos os alertas abertos)
 export async function daily({ dry = false } = {}) {
   const now = await collectAlerts();
-  const { text, digest } = message('Resumo', now);
+  const msg = message('Resumo', now);
+  // situação do sistema (verificação das 7h): uma linha no fim, ou os problemas que ainda não foram corrigidos
+  const sys = healthLines(readState().health);
+  const text = sys.length ? `${msg.text}\n\n${sys.join('\n')}` : msg.text;
+  const digest = { ...msg.digest, lines: [...msg.digest.lines.slice(0, 10 - Math.min(sys.length, 2)), ...sys.slice(0, 2)] };
   if (dry) return { preview: text };
   const sent = await broadcast((phone) => sendText(phone, text, { digest, templateBody: `Resumo do dia: ${now.length} alerta(s) aberto(s)${now.length ? ` — ${oneLine(now)}` : ''}.` }));
   // o resumo também vale como "já avisado" para os alertas atuais
@@ -296,6 +302,7 @@ export const JOBS = { weekly, monthly, daily, alerts, activeAds, activeAdsPdf };
 
 // ---------- registro de execuções (DATA_DIR/jobs-log.jsonl) ----------
 const LOG = path.join(DATA, 'jobs-log.jsonl');
+JOBS.health = () => healthCheck({ readState, writeState, logFile: LOG });
 function appendLog(entry) {
   try {
     fs.appendFileSync(LOG, `${JSON.stringify(entry)}\n`);
@@ -377,8 +384,15 @@ async function tickOnce() {
     appendLog({ at: new Date().toISOString(), job: 'tick', ok: true, result: 'estado novo criado; nada enviado' });
     return { ran: [], seeded: true };
   }
+  writeState({ ...readState(), lastTickAt: Date.now() });
   // rotina nova (anúncios ativos por mensagem) num servidor que já rodava: começa no próximo dia agendado, sem disparo surpresa hoje
   if (!('lastActiveAds' in readState())) writeState({ ...readState(), lastActiveAds: now.date });
+  // verificação de saúde: todo dia a partir das 7h, antes do resumo (que mostra o resultado)
+  const ran = [];
+  if (now.hour >= 7 && readState().lastHealth !== now.date) {
+    writeState({ ...readState(), lastHealth: now.date });
+    try { await runJob('health'); ran.push('health'); } catch { /* registrado */ }
+  }
   const due = dueJobs(now, readState());
   if (due.some(([j]) => j === 'daily')) writeState({ ...readState(), lastAlertsAt: Date.now() });
   for (const [job, mark, value] of due) {
@@ -386,7 +400,13 @@ async function tickOnce() {
     writeState({ ...readState(), [mark]: value }); // marca antes, para não repetir se demorar ou falhar
     try { await runJob(job); } catch { /* registrado no log */ }
   }
-  return { ran: due.map(([j]) => j) };
+  ran.push(...due.map(([j]) => j));
+  // fila de mensagens adiadas (limite da Meta): tenta de novo para quem já foi liberado, de dia
+  if (now.hour >= 7 && now.hour <= 22) {
+    const q = await flushQueue().catch(() => ({ sent: 0 }));
+    if (q.sent) { ran.push('fila'); appendLog({ at: new Date().toISOString(), job: 'fila', ok: true, result: JSON.stringify(q) }); }
+  }
+  return { ran };
 }
 JOBS.tick = tick;
 
@@ -410,7 +430,8 @@ async function weeklyResumable(week) {
 export function status() {
   const st = readState();
   const { alerts: open, ...marks } = st;
-  return { enabled: process.env.JOBS_ENABLED === '1', now: nowBR(), dataDir: DATA, marks: { ...marks, lastAlertsAt: marks.lastAlertsAt ? new Date(marks.lastAlertsAt).toISOString() : null }, openAlerts: Object.keys(open || {}).length,
+  const { health, ...rest } = marks;
+  return { enabled: process.env.JOBS_ENABLED === '1', now: nowBR(), dataDir: DATA, health: health ? { at: health.at, resumo: health.resumo, problemas: health.items.filter((i) => i.nivel !== 'ok') } : null, fila: guardStatus(), marks: { ...rest, lastAlertsAt: rest.lastAlertsAt ? new Date(marks.lastAlertsAt).toISOString() : null }, openAlerts: Object.keys(open || {}).length,
     schedule: { daily: 'todo dia, 8h', alerts: 'a cada 30 min, 7h–23h', weekly: 'segunda, 8h (um PDF por cliente)', monthly: 'dia 1º, 8h (mês anterior)', activeAds: `${AA_DAYS().join(', ')} · ${AA_HOUR()}h (mensagem)` }, log: jobLog(30) };
 }
 
