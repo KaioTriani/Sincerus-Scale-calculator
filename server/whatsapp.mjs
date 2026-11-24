@@ -124,7 +124,9 @@ async function post(conv, payload) {
 }
 // envia (ou adia) e confere; item = como reenviar depois, se for adiado
 async function deliver(phone, conv, payload, item) {
-  const held = blockedUntil(phone) || (await capFromHistory(conv));
+  // a pausa vale só para modelos de Marketing (o limite da Meta é deles); Utilidade e mensagem livre seguem normalmente
+  const marketing = payload.json?.template_params?.category === 'MARKETING';
+  const held = marketing ? blockedUntil(phone) || (await capFromHistory(conv)) : null;
   if (held) {
     if (!blockedUntil(phone)) block(phone, held.reason, Math.max(1, (held.until - Date.now()) / 3600000));
     if (item?.type !== 'noop') enqueue({ phone, ...item });
@@ -133,7 +135,7 @@ async function deliver(phone, conv, payload, item) {
   const id = await post(conv, payload);
   const st = await confirm(conv, id);
   if (st.status === 'failed') {
-    if (CAP_CODES.some((c) => st.error.startsWith(c))) { block(phone, st.error.slice(0, 80)); if (item?.type !== 'noop') enqueue({ phone, ...item }); throw new Deferred(`adiado após limite da Meta: ${st.error.slice(0, 60)}`); }
+    if (marketing && CAP_CODES.some((c) => st.error.startsWith(c))) { block(phone, st.error.slice(0, 80)); if (item?.type !== 'noop') enqueue({ phone, ...item }); throw new Deferred(`adiado após limite da Meta: ${st.error.slice(0, 60)}`); }
     throw new Error(`Meta recusou: ${st.error.slice(0, 120)}`);
   }
   return st.status;
