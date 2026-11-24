@@ -84,14 +84,16 @@ export async function sendText(phone, text, { templateBody, digest } = {}) {
     return 'texto';
   }
   const oneLine = (s, max = 1000) => String(s).replace(/\s*\n+\s*/g, ' · ').replace(/\s{2,}/g, ' ').slice(0, max);
-  const useDigest = digest && env('WA_TEMPLATE_DIGEST');
+  // modelos diario_sincerus_1…10 (aprovados): padrão mesmo sem a variável; WA_TEMPLATE_DIGEST=off volta ao modelo antigo
+  const digestName = env('WA_TEMPLATE_DIGEST', 'diario_sincerus');
+  const useDigest = digest && digestName !== 'off';
   let tpl, body;
   if (useDigest) {
     // modelos <prefixo>_1 … <prefixo>_10: uma variável por linha ("Cliente - Info"); passando de 10, a última vira "e mais N"
     const MAX = 10;
     let list = digest.lines.length ? digest.lines.map((l) => oneLine(l, 200)) : ['Nenhum alerta aberto. Tudo certo com as contas'];
     if (list.length > MAX) list = [...list.slice(0, MAX - 1), `E mais ${list.length - (MAX - 1)} aviso(s) — lista completa na plataforma`];
-    tpl = `${env('WA_TEMPLATE_DIGEST')}_${list.length}`;
+    tpl = `${digestName}_${list.length}`;
     body = { 1: oneLine(digest.type, 60), ...Object.fromEntries(list.map((l, i) => [i + 2, l])) };
   } else {
     tpl = env('WA_TEMPLATE_ALERT');

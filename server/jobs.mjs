@@ -64,7 +64,7 @@ const cut = (s, n) => { const t = String(s || '').replace(/\s+/g, ' ').trim(); r
 // Relatório semanal: um PDF por cliente (últimos 7 dias × 7 dias anteriores), enviado em mensagens separadas.
 // Cada PDF é montado só com os dados daquela conta de anúncios.
 const fileSafe = (s) => String(s).normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^A-Za-z0-9]+/g, '_').replace(/^_|_$/g, '');
-export async function weekly({ dry = false } = {}) {
+export async function weekly({ dry = false, skip = [], onSent } = {}) {
   const { date } = nowBR();
   const since = addDays(date, -7), until = addDays(date, -1);
   const cmp = [addDays(since, -7), addDays(since, -1)];
@@ -85,11 +85,13 @@ export async function weekly({ dry = false } = {}) {
   const out = { period: [since, until], clients: [], errors };
   for (const x of list) {
     const name = x.model.client;
+    if (skip.includes(x.account)) { out.clients.push({ client: name, account: x.account, skipped: 'já enviado nesta semana' }); continue; }
     try {
       const { html } = R.buildClientReportsHtml([x]); // um cliente por documento
       const file = `Relatorio_semanal_${fileSafe(name)}_${dm(since).replace('/', '-')}_a_${dm(until).replace('/', '-')}`;
       const r = await sendPdf(html, file, `Relatório semanal · ${name} · ${period}`, { name: 'equipe', title: `o relatório semanal de ${name}`, period }, { dry });
       out.clients.push({ client: name, account: x.account, ...r });
+      if (!dry && r.sent?.some((s) => s.ok)) onSent?.(x.account); // anota o progresso: se o processo cair, continua de onde parou
     } catch (e) { errors.push({ client: name, error: e.message }); }
   }
   return out;
@@ -289,7 +291,8 @@ export async function runJob(name, opts = {}) {
     // envio que falhou para algum destinatário conta como erro parcial
     const failed = JSON.stringify(r).includes('"ok":false') || (r?.errors?.length > 0);
     console.log(`[rotina ${name}] ${failed ? 'concluída com falhas' : 'ok'} em ${sec}s`, brief(r));
-    appendLog({ ...base, ok: !failed, partial: failed || undefined, sec, result: brief(r) });
+    // tick sem nada para rodar não entra no registro (senão esconde as execuções que importam)
+    if (!(name === 'tick' && !r?.ran?.length && !r?.seeded)) appendLog({ ...base, ok: !failed, partial: failed || undefined, sec, result: brief(r) });
     return r;
   } catch (e) {
     console.error(`[rotina ${name}] erro:`, e.message);
@@ -321,9 +324,9 @@ let ticking = false;
 export async function tick() {
   if (process.env.JOBS_ENABLED !== '1') return { off: true };
   if (ticking) return { busy: true };
-  // trava em arquivo também: se a Hostinger rodar mais de um processo, só um executa (trava velha de 3h é ignorada: o mensal pode demorar)
+  // trava em arquivo também: se a Hostinger rodar mais de um processo, só um executa (trava com mais de 20 min é de um processo que caiu e é ignorada)
   const lock = path.join(DATA, 'tick.lock');
-  try { if (Date.now() - fs.statSync(lock).mtimeMs > 3 * 3600000) fs.rmSync(lock, { force: true }); } catch { /* sem trava */ }
+  try { if (Date.now() - fs.statSync(lock).mtimeMs > 20 * 60000) fs.rmSync(lock, { force: true }); } catch { /* sem trava */ }
   let fd;
   try { fd = fs.openSync(lock, 'wx'); } catch { return { busy: true }; }
   ticking = true;
@@ -347,12 +350,29 @@ async function tickOnce() {
   const due = dueJobs(now, readState());
   if (due.some(([j]) => j === 'daily')) writeState({ ...readState(), lastAlertsAt: Date.now() });
   for (const [job, mark, value] of due) {
+    if (job === 'weekly') { await weeklyResumable(value); continue; }
     writeState({ ...readState(), [mark]: value }); // marca antes, para não repetir se demorar ou falhar
     try { await runJob(job); } catch { /* registrado no log */ }
   }
   return { ran: due.map(([j]) => j) };
 }
 JOBS.tick = tick;
+
+// Semanal: são vários PDFs; se o processo cair no meio, a próxima chamada continua só com os clientes que faltam.
+// A semana só é marcada como concluída no fim (ou depois de 3 tentativas, para nunca ficar em repetição).
+async function weeklyResumable(week) {
+  const st = readState();
+  const run = st.weeklyRun?.week === week ? st.weeklyRun : { week, attempts: 0, sent: [] };
+  run.attempts += 1;
+  writeState({ ...st, weeklyRun: run });
+  if (run.attempts > 3) {
+    writeState({ ...readState(), lastWeekly: week });
+    appendLog({ at: new Date().toISOString(), job: 'weekly', ok: false, error: `desistiu após 3 tentativas; enviados ${run.sent.length} clientes` });
+    return;
+  }
+  const onSent = (acc) => { const s = readState(); if (s.weeklyRun?.week === week && !s.weeklyRun.sent.includes(acc)) { s.weeklyRun.sent.push(acc); writeState(s); } };
+  try { await runJob('weekly', { skip: run.sent, onSent }); writeState({ ...readState(), lastWeekly: week }); } catch { /* registrado; tenta de novo no próximo tick */ }
+}
 
 // situação das rotinas: últimos envios marcados e registro recente
 export function status() {

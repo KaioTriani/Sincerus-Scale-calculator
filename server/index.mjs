@@ -46,6 +46,9 @@ async function api(req, res, url) {
           return send(500, { error: e.message, code: e.code, syscall: e.syscall, path: e.path, stack: String(e.stack || '').split('\n').slice(0, 8) });
         }
       }
+      // o tick (Cron) espera terminar antes de responder: com uma requisição aberta a hospedagem não encerra o processo
+      // no meio do envio (foi o que interrompeu o semanal). As outras rotinas manuais seguem em segundo plano.
+      if (job === 'tick') return send(200, await runJob('tick'));
       runJob(job).catch(() => {}); // roda em segundo plano (pode levar minutos)
       return send(202, { started: job });
     }
