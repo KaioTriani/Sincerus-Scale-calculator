@@ -1,0 +1,77 @@
+/* Plataforma Sincerus (landing, login, área restrita). A calculadora usa app/globals.css. */
+@import "tailwindcss";
+@source "./";
+@source not "../roleta";
+
+@theme {
+  --color-carbon-950: #07080A;
+  --color-carbon-900: #0C0D0F;
+  --color-carbon-800: #131519;
+  --color-carbon-700: #1B1E23;
+  --color-carbon-600: #262A31;
+  --color-brand: #F76000;
+  --color-brand-300: #FFA266;
+  --color-brand-400: #FF7A1F;
+  --color-brand-500: #F76000;
+  --color-brand-600: #D95400;
+  --color-brand-700: #BD4C04;
+  --color-mist: #9AA0A8;
+
+  --font-display: 'Sora', system-ui, sans-serif;
+  --font-sans: 'Inter', system-ui, sans-serif;
+
+  --shadow-glow: 0 0 0 1px rgba(247, 96, 0, .35), 0 8px 40px -8px rgba(247, 96, 0, .55);
+  --shadow-glass: 0 1px 0 0 rgba(255, 255, 255, .06) inset, 0 20px 60px -20px rgba(0, 0, 0, .7);
+
+  --animate-drift: drift 18s ease-in-out infinite;
+  --animate-drift-slow: drift 26s ease-in-out infinite reverse;
+  --animate-spinslow: spinslow 40s linear infinite;
+  --animate-floaty: floaty 6s ease-in-out infinite;
+
+  @keyframes drift { 0%, 100% { transform: translate(0, 0) scale(1); } 50% { transform: translate(4%, -6%) scale(1.08); } }
+  @keyframes spinslow { to { transform: rotate(360deg); } }
+  @keyframes floaty { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-10px); } }
+}
+
+@layer base {
+  html { color-scheme: dark; -webkit-tap-highlight-color: transparent; }
+  body {
+    @apply bg-carbon-950 font-sans text-white antialiased;
+    margin: 0;
+    background-image:
+      radial-gradient(1200px 600px at 85% -10%, rgba(247, 96, 0, 0.10), transparent 60%),
+      radial-gradient(900px 500px at -10% 110%, rgba(247, 96, 0, 0.06), transparent 60%);
+    background-attachment: fixed;
+  }
+  ::selection { background: rgba(247, 96, 0, 0.35); }
+  h1, h2, h3, h4 { @apply font-display tracking-tight; }
+  button { cursor: pointer; }
+  :focus-visible { @apply outline-none ring-2 ring-brand/70 ring-offset-2 ring-offset-carbon-950; }
+}
+
+@layer components {
+  .glass { @apply rounded-3xl border border-white/[0.07] bg-white/[0.035] shadow-glass backdrop-blur-xl; }
+  .glass-strong { @apply rounded-3xl border border-white/10 bg-carbon-800/70 shadow-glass backdrop-blur-2xl; }
+  .text-gradient { @apply bg-linear-to-r from-white via-white to-brand-300 bg-clip-text text-transparent; }
+  .text-brand-gradient { @apply bg-linear-to-r from-brand-300 via-brand-400 to-brand-600 bg-clip-text text-transparent; }
+  .eyebrow { @apply inline-flex items-center gap-2 rounded-full border border-brand/25 bg-brand/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-brand-300; }
+  .chip { @apply inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs font-medium text-white/70 transition hover:border-white/20 hover:text-white; }
+  .chip-active { @apply border-brand/50 bg-brand/15 text-white; }
+}
+
+/* Grão sutil por cima de tudo */
+.grain::after {
+  content: '';
+  position: fixed;
+  inset: -50%;
+  pointer-events: none;
+  z-index: 60;
+  opacity: 0.035;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+.scrollbar-thin::-webkit-scrollbar { width: 6px; height: 6px; }
+.scrollbar-thin::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.12); border-radius: 99px; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
+}
