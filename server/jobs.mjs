@@ -335,26 +335,85 @@ export async function daily({ dry = false } = {}) {
   return { alerts: now.length, sent };
 }
 
-// E-mail diário (8h): PDF "Resumo do dia" no padrão Sincerus — avisos, situação do sistema e anúncios ativos por cliente
+// Relatório diário (8h) sobre o DIA ANTERIOR: PDF no padrão Sincerus por e-mail (e WhatsApp quando houver modelo de Utilidade)
 export async function emailDaily({ dry = false } = {}) {
   const R = await reports();
   const { date } = nowBR();
-  const [open, ads] = await Promise.all([collectAlerts(), meta.activeAds(true)]);
-  const accs = ads.accounts.filter((a) => a.campaigns.length && !excluded(a)).sort((a, b) => friendly(a.name).localeCompare(friendly(b.name), 'pt-BR'));
+  const day = addDays(date, -1); // o relatório das 8h é sobre o dia anterior completo
+  const base = [addDays(day, -7), addDays(day, -1)];
+  const accs = (await meta.accounts(true)).filter((a) => !excluded(a) && a.statusCode !== 2 && a.statusCode !== 101);
+  let fx = { rate: 1, source: '' };
+  if (accs.some((a) => a.currency === 'USD')) { try { fx = await ptax(addDays(day, -6), day); } catch { fx = { rate: null, source: '' }; } }
+  const [open, data] = await Promise.all([
+    collectAlerts(),
+    pool(accs, 4, async (a) => { try { return await meta.dailyAds(a.id, day, base[0], base[1], true); } catch (e) { console.error('dailyAds', a.name, e.message); return null; } }),
+  ]);
+  const MIN = { BRL: 10, USD: 2 };
+  const clients = data.filter((x) => x && x.ads.length && (x.ads.some((a) => a.active) || x.total.spend > 0)).map((x) => {
+    const ads = x.ads.map((a) => {
+      let alert = 'media', diff = null;
+      if (a.active && !a.spend) alert = 'sem-entrega';
+      else if (a.spend >= (MIN[x.currency] ?? 10) && !a.results) alert = 'sem-resultado';
+      else if (!a.results) alert = 'pouco';
+      else if (a.cpr && a.baseCpr) { diff = a.cpr / a.baseCpr - 1; alert = diff >= 0.3 ? (a.spend >= (MIN[x.currency] ?? 10) ? 'alto' : 'media') : diff <= -0.2 ? 'bom' : 'media'; }
+      else if (a.cpr && !a.baseCpr) alert = 'novo';
+      return { ...a, label: R.adLabel(a.name), alert, diff };
+    });
+    // campanhas: as de maior gasto primeiro; anúncios por gasto
+    const byCamp = new Map();
+    for (const a of ads) { if (!byCamp.has(a.campaignId)) byCamp.set(a.campaignId, { name: campaignShort(a.campaign), budget: a.budget, ads: [], spend: 0 }); const k = byCamp.get(a.campaignId); k.ads.push(a); k.spend += a.spend; }
+    // anúncios ativos sem gasto ontem ficam numa linha só por campanha (idle)
+    const campaigns = [...byCamp.values()].sort((p, q) => q.spend - p.spend).map((k) => ({ ...k, idle: k.ads.filter((a) => a.alert === 'sem-entrega').map((a) => a.label), ads: k.ads.filter((a) => a.alert !== 'sem-entrega').sort((p, q) => q.spend - p.spend) }));
+    // orçamento diário do cliente: soma dos orçamentos diários (sem contar duas vezes a mesma campanha/conjunto)
+    const seen = new Set(); let budgetDay = 0;
+    for (const a of ads.filter((z) => z.active && z.budget?.per === 'dia')) { const key = a.budget.level === 'campanha' ? `c${a.campaignId}` : `s${a.adset}${a.campaignId}`; if (!seen.has(key)) { seen.add(key); budgetDay += a.budget.value; } }
+    // indicador principal do cliente: o de maior gasto
+    const spendBy = {}; for (const a of ads) if (a.indicator) spendBy[a.indicator] = (spendBy[a.indicator] || 0) + a.spend;
+    const main = Object.entries(spendBy).sort((p, q) => q[1] - p[1])[0]?.[0];
+    const mainAds = ads.filter((a) => a.indicator === main);
+    const results = mainAds.reduce((t, a) => t + a.results, 0);
+    const bSpend = mainAds.reduce((t, a) => t + a.baseSpend, 0), bRes = mainAds.reduce((t, a) => t + a.baseResults, 0);
+    const mainSpend = mainAds.reduce((t, a) => t + a.spend, 0);
+    const label = mainAds[0]?.resultLabel || 'resultados';
+    return {
+      name: friendly(x.name), currency: x.currency, spend: x.total.spend, reach: x.total.reach, impressions: x.total.impressions, budgetDay: budgetDay || null,
+      results, resultShort: /conversa/i.test(label) ? 'conversas' : /lead|cadastro/i.test(label) ? 'leads' : /perfil/i.test(label) ? 'visitas ao perfil' : /compra/i.test(label) ? 'compras' : 'resultados',
+      cpr: results ? mainSpend / results : null, baseCpr: bRes ? bSpend / (bRes) : null,
+      alerts: ads.filter((a) => a.alert === 'sem-resultado' || a.alert === 'alto').length, campaigns, ads,
+    };
+  }).sort((p, q) => q.spend * (p.currency === 'USD' ? 1 : 1) - p.spend);
+  clients.sort((p, q) => (q.spend * (q.currency === 'USD' ? fx.rate || 5 : 1)) - (p.spend * (p.currency === 'USD' ? fx.rate || 5 : 1)));
+  const toBrl = (c, v) => (c.currency === 'USD' ? (fx.rate ? v * fx.rate : 0) : v);
+  const allAds = clients.flatMap((c) => c.ads.map((a) => ({ ...a, client: c.name, currency: c.currency })));
+  const spendBrl = clients.reduce((t, c) => t + toBrl(c, c.spend), 0);
+  const results = clients.reduce((t, c) => t + c.results, 0);
+  const costAlerts = allAds.filter((a) => a.alert === 'sem-resultado' || a.alert === 'alto');
+  // "precisa de atenção": avisos das contas (saldo, pagamento, entrega…) + alertas de custo dos anúncios
+  const tone = (a) => (a.kind === 'saldo/pagamento' && a.level !== 'crit' ? 'soon' : a.level === 'crit' ? 'crit' : 'warn');
+  const split = (s) => { const i = s.indexOf(' → '); return i < 0 ? [s, ''] : [s.slice(0, i), s.slice(i + 3)]; };
+  const fmtM = (c, v) => `${c === 'USD' ? 'US$' : 'R$'} ${v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const attention = [
+    ...order(open).filter((a) => a.kind !== 'frequência alta' || true).map((a) => { const [t, act] = split(a.info || a.text); return { tone: tone(a), client: friendly(a.client), text: t.charAt(0).toUpperCase() + t.slice(1), action: act }; }),
+    ...costAlerts.sort((p, q) => q.spend - p.spend).slice(0, 12).map((a) => ({
+      tone: a.alert === 'sem-resultado' ? 'crit' : 'soon', client: a.client,
+      text: a.alert === 'sem-resultado' ? `"${a.label}" gastou ${fmtM(a.currency, a.spend)} ontem sem resultado` : `"${a.label}": custo por resultado ${fmtM(a.currency, a.cpr)}, ${Math.round(a.diff * 100)}% acima da média de 7 dias (${fmtM(a.currency, a.baseCpr)})`,
+      action: a.alert === 'sem-resultado' ? 'rever criativo e público ou pausar' : 'acompanhar hoje; se continuar alto, trocar criativo',
+    })),
+  ];
+  const wd = new Date(`${day}T12:00:00Z`).toLocaleDateString('pt-BR', { weekday: 'long', timeZone: 'UTC' });
   const h = readState().health;
-  const sys = h ? h.items.filter((i) => i.nivel !== 'ok' && !i.corrigido) : [];
-  const clients = accs.map((a) => ({
-    name: friendly(a.name),
-    campaigns: a.campaigns.map((c) => ({ name: campaignShort(c.name), ads: [...new Set(c.adsets.flatMap((st) => st.ads.map((x) => R.adLabel(x.name))))] })),
-  }));
-  const html = buildDailyReportHtml({ day: dm(date), alerts: order(open).map((a) => ({ client: friendly(a.client), level: a.level, kind: a.kind, info: a.info || a.text })), sys, sysChecked: !!h && h.at?.slice(0, 10) === new Date().toISOString().slice(0, 10), clients, logo: logo() });
+  const html = buildDailyReportHtml({
+    dayShort: dm(day), dayLong: `${wd}, ${dm(day)}`, generated: `Dados de ontem (${dm(day)}) · situação das contas às ${String(nowBR().hour).padStart(2, '0')}h de ${dm(date)} · ${clients.length} clientes`,
+    kpis: { spend: spendBrl, spendNote: clients.some((c) => c.currency === 'USD') ? 'dólar convertido em reais' : '', results, resultsNote: 'indicador de cada anúncio', cpr: results ? spendBrl / results : null, reach: clients.reduce((t, c) => t + c.reach, 0), impressions: clients.reduce((t, c) => t + c.impressions, 0), costAlerts: costAlerts.length, ads: allAds.filter((a) => a.active).length },
+    attention, clients, sys: h && h.at?.slice(0, 10) === new Date().toISOString().slice(0, 10) ? h.items.filter((i) => i.nivel !== 'ok' && !i.corrigido) : null, logo: logo(),
+    rateNote: fx.source ? `Totais em reais; contas em dólar convertidas pela ${fx.source.split(' — ')[0]} (R$ ${fx.rate.toLocaleString('pt-BR')}).` : '',
+  });
   const pdf = await htmlToPdf(html);
-  const fileName = `Resumo_do_dia_${date}.pdf`;
-  if (dry) { fs.mkdirSync(DATA, { recursive: true }); fs.writeFileSync(path.join(DATA, fileName), pdf); fs.writeFileSync(path.join(DATA, fileName.replace(/.pdf$/, '.html')), html); }
-  const nAds = clients.reduce((t, c) => t + c.campaigns.reduce((u, k) => u + k.ads.length, 0), 0);
+  const fileName = `Resumo_do_dia_${day}.pdf`;
+  if (dry) { fs.mkdirSync(DATA, { recursive: true }); fs.writeFileSync(path.join(DATA, fileName), pdf); fs.writeFileSync(path.join(DATA, fileName.replace(/\.pdf$/, '.html')), html); }
   const r = await emailOnce('lastDailyEmail', date, () => ({
-    subject: `Resumo do dia ${dm(date)} · ${open.length ? `${open.length} aviso(s)` : 'tudo certo'} · ${nAds} anúncios ativos`,
-    html: emailLayout({ title: `Resumo do dia ${dm(date)}`, subtitle: 'Relatório diário em PDF anexado', sections: [{ html: `<p style="font-size:14px;line-height:1.6;margin:0">Segue em anexo o resumo do dia: <b>${open.length} aviso(s)</b> nas contas, situação do sistema e <b>${nAds} anúncios ativos</b> em ${clients.length} clientes.</p>` }] }),
+    subject: `Resumo de ${dm(day)} · ${fmtM('BRL', spendBrl)} investidos · ${costAlerts.length} alerta(s) de custo`,
+    html: emailLayout({ title: `Resumo de ${wd}, ${dm(day)}`, subtitle: 'Relatório diário em PDF anexado', sections: [{ html: `<p style="font-size:14px;line-height:1.6;margin:0">Segue em anexo o resumo de ontem: <b>${fmtM('BRL', spendBrl)}</b> investidos em ${clients.length} clientes, <b>${results}</b> resultados, <b>${costAlerts.length}</b> alerta(s) de custo e ${open.length} aviso(s) nas contas.</p>` }] }),
     attachments: [{ filename: fileName, content: pdf }],
   }), { dry });
   // WhatsApp: o mesmo PDF, só quando o modelo de documento já é de Utilidade (sem limite diário); senão fica só no e-mail
@@ -362,12 +421,12 @@ export async function emailDaily({ dry = false } = {}) {
   if (!dry && whatsappConfigured() && readState().lastDailyPdfWa !== date) {
     const cats = await templateCategories();
     if (cats[process.env.WA_TEMPLATE_DOC || 'documento_sincerus'] === 'UTILITY') {
-      wa = await broadcast((phone) => sendDocument(phone, pdf, fileName, `Resumo do dia ${dm(date)}`, { name: 'equipe', title: `o resumo do dia ${dm(date)}`, period: dm(date) }));
+      wa = await broadcast((phone) => sendDocument(phone, pdf, fileName, `Resumo de ${dm(day)}`, { name: 'equipe', title: `o resumo de ${dm(day)}`, period: dm(day) }));
       writeState({ ...readState(), lastDailyPdfWa: date });
     }
   }
   if (!dry) writeState({ ...readState(), lastDailyPdf: date });
-  return { email: r, whatsapp: wa, bytes: pdf.length, ...(dry ? { file: path.join(DATA, fileName) } : {}) };
+  return { day, email: r, whatsapp: wa, bytes: pdf.length, clients: clients.length, costAlerts: costAlerts.length, ...(dry ? { file: path.join(DATA, fileName) } : {}) };
 }
 
 export const JOBS = { weekly, monthly, daily, alerts, activeAds, activeAdsPdf, emailDaily };

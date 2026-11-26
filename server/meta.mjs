@@ -419,3 +419,53 @@ export function adHealth(account, refresh) {
     return issues;
   }, refresh);
 }
+
+// ---------- Resumo do dia anterior por anúncio (relatório diário) ----------
+// Anúncios ativos agora + os que gastaram no dia: gasto, alcance, impressões, interações, resultados (campo results,
+// o mesmo da coluna Resultados), custo por resultado, orçamento (do conjunto ou da campanha) e a referência dos 7 dias
+// anteriores para o alerta de custo.
+export function dailyAds(account, day, baseSince, baseUntil, refresh) {
+  if (!/^act_\d+$/.test(account)) throw Object.assign(new Error('Conta inválida.'), { status: 400 });
+  return cached(`daily:${account}:${day}`, async () => {
+    const tr = (s, u) => JSON.stringify({ since: s, until: u });
+    const insF = 'ad_id,ad_name,adset_id,campaign_id,spend,reach,impressions,actions,results';
+    const [info, ads, adsets, camps, yd, base, acc] = await Promise.all([
+      graph(account, { fields: 'name,currency' }, { all: false }),
+      graph(`${account}/ads`, { effective_status: JSON.stringify(['ACTIVE']), fields: 'id,name,adset_id,campaign_id,adset{end_time}', limit: '500' }),
+      graph(`${account}/adsets`, { fields: 'id,name,campaign_id,daily_budget,lifetime_budget,end_time', limit: '500' }),
+      graph(`${account}/campaigns`, { fields: 'id,name,daily_budget,lifetime_budget,effective_status', limit: '500' }),
+      graph(`${account}/insights`, { level: 'ad', time_range: tr(day, day), fields: insF, limit: '500' }),
+      graph(`${account}/insights`, { level: 'ad', time_range: tr(baseSince, baseUntil), fields: 'ad_id,spend,actions,results', limit: '500' }),
+      graph(`${account}/insights`, { level: 'account', time_range: tr(day, day), fields: 'spend,reach,impressions' }),
+    ]);
+    const now = Date.now();
+    const live = ads.filter((a) => !(a.adset?.end_time && new Date(a.adset.end_time).getTime() < now));
+    const ydBy = new Map(yd.map((r) => [r.ad_id, r]));
+    const baseBy = new Map(base.map((r) => [r.ad_id, r]));
+    const setBy = new Map(adsets.map((s) => [s.id, s]));
+    const campBy = new Map(camps.map((c) => [c.id, c]));
+    // anúncios: ativos agora + os que gastaram ontem (pausados depois aparecem marcados)
+    const ids = new Map(live.map((a) => [a.id, { id: a.id, name: a.name, adset_id: a.adset_id, campaign_id: a.campaign_id, active: true }]));
+    for (const r of yd) if (Number(r.spend) > 0 && !ids.has(r.ad_id)) ids.set(r.ad_id, { id: r.ad_id, name: r.ad_name, adset_id: r.adset_id, campaign_id: r.campaign_id, active: false });
+    const money = (v) => (v != null ? Number(v) / 100 : null);
+    const rows = [...ids.values()].map((a) => {
+      const r = ydBy.get(a.id) || {}, b = baseBy.get(a.id) || {};
+      let ind = ownIndicator(r) || ownIndicator(b);
+      // anúncio de mensagem cujo indicador oficial ficou zerado (ex.: "Leads" sem lead) mas teve conversas: usa conversas
+      if ((!ind || (!(valueFor(r, ind) > 0) && !(valueFor(b, ind) > 0))) && (actionOf(r.actions, CONV.slice(8)) > 0 || actionOf(b.actions, CONV.slice(8)) > 0)) ind = CONV;
+      const spend = Number(r.spend || 0), results = ind ? valueFor(r, ind) || 0 : 0;
+      const bSpend = Number(b.spend || 0), bRes = ind ? valueFor(b, ind) || 0 : 0;
+      const set = setBy.get(a.adset_id) || {}, camp = campBy.get(a.campaign_id) || {};
+      return {
+        id: a.id, name: a.name, active: a.active, adset: set.name || '', campaignId: a.campaign_id, campaign: camp.name || r.campaign_name || '',
+        indicator: ind, resultLabel: indLabel(ind), spend, reach: Number(r.reach || 0), impressions: Number(r.impressions || 0),
+        interactions: actionOf(r.actions, 'post_engagement') || 0, results, cpr: results ? spend / results : null,
+        baseCpr: bRes ? bSpend / bRes : null, baseSpend: bSpend, baseResults: bRes,
+        budget: camp.daily_budget ? { value: money(camp.daily_budget), per: 'dia', level: 'campanha' } : camp.lifetime_budget ? { value: money(camp.lifetime_budget), per: 'total', level: 'campanha' }
+          : set.daily_budget ? { value: money(set.daily_budget), per: 'dia', level: 'conjunto' } : set.lifetime_budget ? { value: money(set.lifetime_budget), per: 'total', level: 'conjunto' } : null,
+      };
+    });
+    const a0 = acc[0] || {};
+    return { account, name: info.name, currency: info.currency, day, base: [baseSince, baseUntil], ads: rows, total: { spend: Number(a0.spend || 0), reach: Number(a0.reach || 0), impressions: Number(a0.impressions || 0) } };
+  }, refresh);
+}

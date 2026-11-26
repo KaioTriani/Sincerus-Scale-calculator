@@ -128,7 +128,7 @@ WhatsApp comercial: +55 (83) 99905-4165.
 
 | E-mail | Quando | Conteúdo |
 |---|---|---|
-| Resumo do dia | Todo dia, 8h | PDF "Resumo do dia" no padrão Sincerus: avisos das contas, situação do sistema e anúncios ativos por cliente |
+| Resumo do dia | Todo dia, 8h (sobre o dia anterior) | PDF no padrão Sincerus: indicadores de ontem, o que precisa de atenção (avisos e alertas de custo), visão por cliente (gasto, orçamento, resultados, custo × média 7 dias) e anúncios ativos com gasto, alcance, interações, resultados, custo por resultado e alerta |
 | Relatórios semanais | Segunda, 8h | Todos os PDFs da semana (um por cliente) num e-mail |
 | Relatório interno | Dia 1º, 8h | PDF do mês anterior (consolidado + detalhe por cliente) |
 
